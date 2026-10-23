@@ -1,0 +1,29 @@
+.drivetrain-panel{width:260px;height:277px;bottom:40px;color:var(--lime)}
+.drivetrain-panel .speed-dial{position:absolute;top:32px;left:10px}
+.transmission-top{display:flex;justify-content:space-between;align-items:center;padding:0 12px;gap:10px}
+.transmission-top button{font-size:13px;letter-spacing:.08em;background:#153438a6;border:1px solid #e4edc938;border-radius:4px;padding:6px 9px;pointer-events:auto;white-space:nowrap}
+.shift-light{font-size:12px;letter-spacing:.06em;border-top:3px solid currentColor;padding-top:5px;white-space:nowrap}
+.drive-readout{position:absolute;top:109px;left:34px;right:28px;display:flex;align-items:center;gap:20px;color:#f5f7eb}
+.gear-readout{width:51px;border-right:1px solid #d8ead738;padding-right:13px;color:var(--lime)}
+.gear-readout,.velocity-readout{display:flex;align-items:center;flex-direction:column}
+.drive-readout strong{font-family:'Barlow Condensed',Impact,sans-serif;font-size:65px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.drive-readout span{font-size:12px;letter-spacing:.12em;margin-top:4px}
+.velocity-readout strong{font-size:66px}
+.rpm-readout{position:absolute;top:212px;left:0;right:0;text-align:center;font-size:12px;letter-spacing:.1em}
+.rpm-readout strong{font-weight:600;font-size:15px;font-variant-numeric:tabular-nums}
+.rpm-readout span{opacity:.65}
+.gear-actions{position:absolute;bottom:0;left:0;right:0;display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#e8efe0}
+.gear-actions button{border:1px solid #d4e8d647;background:#16363bbd;border-radius:5px;min-width:58px;min-height:37px;pointer-events:auto;font-size:20px;touch-action:manipulation}
+.gear-actions kbd{font-size:12px}
+.gear-actions span{font-size:10px;letter-spacing:.08em}
+.near-redline,.near-redline .gear-readout{color:#ffad62}
+.shift-now .shift-light{color:#ff795f;animation:shift-flash .3s steps(2,end) infinite}
+@keyframes shift-flash{50%{opacity:.25}}
+body:not(.playing) .drivetrain-panel{opacity:0;visibility:hidden;pointer-events:none}
+.paused .gear-actions button,.paused .transmission-top button{pointer-events:none}
+@media(max-width:1100px){.drivetrain-panel{right:20px}.bottom-center{max-width:calc(100vw - 510px)}.keyboard-hint{white-space:normal;flex-wrap:wrap;justify-content:center}}
+@media(max-width:700px){.drivetrain-panel{transform:scale(.78);right:8px;bottom:36px}.playing .drivetrain-panel{bottom:42px}.playing .map-panel{width:135px}.bottom-center{max-width:none}}
+@media(pointer:coarse){.playing .drivetrain-panel{bottom:101px}.gear-actions button{min-height:46px;min-width:62px}.drivetrain-panel{height:286px}}
+@media(max-height:650px) and (min-width:701px){.drivetrain-panel{transform:scale(.77);transform-origin:bottom right;bottom:28px}.playing .drivetrain-panel{bottom:92px}}
+@media(prefers-reduced-motion:reduce){.shift-now .shift-light{animation:none}}
+@media(max-width:380px){.playing .drivetrain-panel{transform:scale(.68)}.playing .map-panel{width:112px;left:14px}}

@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { Vehicle } from '../physics/vehicle';
+import { gt01 } from '../data/vehicles/gt01';
+import type { VehicleDefinition } from '../data/vehicles/types';
 
 export class Car {
   readonly mesh = new THREE.Group();
@@ -8,13 +10,14 @@ export class Car {
   private hubs: THREE.Group[] = [];
   private brakeMaterial = new THREE.MeshStandardMaterial({ color: '#ff3c32', emissive: '#e42214', emissiveIntensity: 0.4 });
 
-  constructor() {
-    const paint = new THREE.MeshStandardMaterial({ color: '#f0bb3c', metalness: 0.48, roughness: 0.28 });
+  constructor(readonly definition: VehicleDefinition = gt01) {
+    const paint = new THREE.MeshStandardMaterial({ color: definition.visual.bodyColor, metalness: 0.48, roughness: 0.28 });
     const glass = new THREE.MeshStandardMaterial({ color: '#152e37', metalness: 0.45, roughness: 0.18 });
     const black = new THREE.MeshStandardMaterial({ color: '#162124', roughness: 0.65 });
     const chrome = new THREE.MeshStandardMaterial({ color: '#b9cbd0', metalness: 0.85, roughness: 0.22 });
     const lamp = new THREE.MeshStandardMaterial({ color: '#edfcff', emissive: '#d9f5ff', emissiveIntensity: 0.65 });
     this.mesh.add(this.body);
+    this.body.scale.set(definition.dimensions.width / 1.97, definition.dimensions.height / 1.59, definition.dimensions.length / 4.36);
     const box = (w: number, h: number, d: number, x: number, y: number, z: number, material: THREE.Material, parent: THREE.Group = this.body) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
       m.position.set(x, y, z);
@@ -49,13 +52,14 @@ export class Car {
     box(1.91, 0.08, 0.31, 0, 1.33, -1.92, black);
     box(0.56, 0.18, 0.045, 0, 0.66, -2.185, chrome);
     box(0.92, 0.18, 0.06, 0, 0.59, 2.19, black);
-    const tireGeometry = new THREE.CylinderGeometry(0.38, 0.38, 0.27, 16);
+    const tireGeometry = new THREE.CylinderGeometry(definition.wheelRadius, definition.wheelRadius, 0.27, 16);
     tireGeometry.rotateZ(Math.PI / 2);
-    const rimGeometry = new THREE.CylinderGeometry(0.25, 0.25, 0.285, 12);
+    const rimRadius = definition.wheelRadius * 0.658;
+    const rimGeometry = new THREE.CylinderGeometry(rimRadius, rimRadius, 0.285, 12);
     rimGeometry.rotateZ(Math.PI / 2);
-    for (const z of [1.34, -1.34]) for (const side of [-1, 1]) {
+    for (const z of [definition.wheelbase / 2, -definition.wheelbase / 2]) for (const side of [-1, 1]) {
       const hub = new THREE.Group();
-      hub.position.set(side * 0.96, 0.4, z);
+      hub.position.set(side * (definition.dimensions.width / 2 - 0.025), definition.wheelRadius + 0.02, z);
       const wheel = new THREE.Group();
       const tire = new THREE.Mesh(tireGeometry, black);
       tire.castShadow = true;
@@ -72,11 +76,25 @@ export class Car {
   }
 
   update(vehicle: Vehicle, braking: boolean) {
-    this.mesh.position.set(vehicle.x, 0.06, vehicle.z);
+    const suspensionTravel = (this.definition.suspension.front.travel + this.definition.suspension.rear.travel) * 0.5;
+    this.mesh.position.set(vehicle.x, suspensionTravel * 0.36, vehicle.z);
     this.mesh.rotation.y = vehicle.heading;
-    this.body.rotation.z = vehicle.steering * Math.min(Math.abs(vehicle.speed) / 40, 0.65) * -0.16;
+    this.body.rotation.z = vehicle.steering * Math.min(Math.abs(vehicle.speed) / 40, 0.65) * -Math.min(0.24, suspensionTravel);
     this.wheels.forEach((wheel) => { wheel.rotation.x = vehicle.wheelAngle; });
     this.hubs.slice(0, 2).forEach((hub) => { hub.rotation.y = vehicle.steering; });
     this.brakeMaterial.emissiveIntensity = braking ? 2.5 : 0.35;
+  }
+
+  dispose() {
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    this.mesh.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      geometries.add(object.geometry);
+      const meshMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      meshMaterials.forEach(material => materials.add(material));
+    });
+    geometries.forEach(geometry => geometry.dispose());
+    materials.forEach(material => material.dispose());
   }
 }

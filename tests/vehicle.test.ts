@@ -52,7 +52,8 @@ test('off-road resistance limits speed', () => {
   simulate(road, 25, throttle);
   simulate(grass, 25, throttle, false);
   assert.ok(road.speed > grass.speed * 1.5);
-  assert.ok(grass.speed <= 24 && road.speed <= 54);
+  assert.ok(grass.speed <= 24);
+  assert.ok(road.transmission.rpm <= road.transmission.redlineRpm);
 });
 
 test('60 Hz and 120 Hz integration stay close', () => {

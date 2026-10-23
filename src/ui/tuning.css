@@ -1,0 +1,48 @@
+.tuning-dialog{width:min(1080px,calc(100vw - 32px));padding:30px;max-height:calc(100dvh - 32px);color:#eff5e6}
+.tuning-header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:24px}
+.tuning-header h2{font-size:28px;margin:13px 0 0;letter-spacing:-.035em}
+.tuning-header .icon-button{flex-shrink:0;font-size:28px}
+.tuning-grid{display:grid;grid-template-columns:minmax(290px,.86fr) minmax(360px,1.2fr);gap:32px}
+.tuning-fields fieldset{border:0;padding:0;margin:0 0 24px;min-width:0}
+.tuning-fields legend{font-size:17px;font-weight:600;margin-bottom:16px}
+.tuning-control{display:grid;grid-template-columns:105px minmax(60px,1fr) 79px;align-items:center;gap:10px;margin:12px 0}
+.tuning-control label{display:flex;align-items:center;gap:8px;font-size:14px}
+.tuning-control i,.gear-speeds i{display:inline-block;width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.tuning-control input[type=range]{width:100%;accent-color:var(--lime);cursor:pointer;min-height:30px;margin:0}
+.tuning-control input[type=number]{width:100%;min-height:37px;background:#0f292e;color:#f5f7eb;border:1px solid #78938c80;border-radius:5px;padding:5px 7px;font:inherit;font-size:14px;font-variant-numeric:tabular-nums}
+.tuning-control input:focus-visible{outline:2px solid var(--lime);outline-offset:3px}
+.tuning-control input[aria-invalid=true]{border-color:#ff957c}
+.tuning-fields p{font-size:12px;margin:12px 0 0;line-height:1.7}
+.tuning-rule{border-top:1px solid #bbd6c726;margin:18px 0}
+.tuning-preview{min-width:0}
+.engine-metrics{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #9bbca43d;background:#102d32;border-radius:7px;margin-bottom:26px}
+.engine-metrics>div{display:flex;flex-direction:column;align-items:center;padding:17px 5px;gap:7px}
+.engine-metrics>div+div{border-left:1px solid #9bbca42b}
+.engine-metrics strong{font-family:'Barlow Condensed',Impact,sans-serif;font-size:36px;font-weight:600;color:var(--lime);line-height:1}
+.engine-metrics span{font-size:11px;letter-spacing:.03em;text-align:center}
+.chart-heading{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.chart-heading h3{font-size:16px;font-weight:500;margin:0}
+.chart-heading>span{font-size:11px;letter-spacing:.08em;color:#b4c9bb}
+.gear-chart{display:block;width:100%;height:auto;margin:16px 0 0;background:#0e2a2e;border-radius:6px}
+.gear-speeds{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:17px 0}
+.gear-speeds>span{display:flex;align-items:center;gap:7px;font-size:13px}
+.gear-speeds strong{font-size:15px;font-weight:500;margin-left:auto}
+.gear-speeds small{font-size:11px;color:#adcdc0}
+.tuning-dialog .chart-note,.tuning-dialog .tuning-tip{font-size:12px;line-height:1.7;margin:16px 0}
+.tuning-tip{border-left:2px solid var(--lime);padding-left:12px}
+.tuning-message{font-size:14px;line-height:1.7;color:var(--lime);min-height:38px;padding:8px 0}
+.tuning-message.invalid{color:#ffad98}
+.tuning-footer{display:flex;gap:18px;justify-content:space-between;align-items:center;border-top:1px solid #c5e1ce2b;padding-top:20px}
+.preset-actions{display:flex;gap:8px;flex-wrap:wrap}
+.preset-actions button{border:1px solid #a1bbaa66;background:transparent;border-radius:5px;padding:11px 12px;min-height:44px;font-size:14px}
+.preset-actions button:hover{background:#ffffff08}
+.tuning-dialog .start-button{width:auto;font-size:14px;white-space:nowrap;min-height:46px}
+.tuning-dialog button:disabled{opacity:.45;cursor:default;transform:none}
+.tuning-dialog .preset-note{font-size:12px;margin:16px 0 0;line-height:1.7}
+.utility-button{font-size:14px;min-width:42px;min-height:42px}
+.audio-controls{display:flex;align-items:center;gap:12px;justify-content:center;font-size:14px;padding:14px 0}
+.audio-controls input{accent-color:var(--lime);width:130px}
+.audio-controls output{min-width:40px;font-variant-numeric:tabular-nums}
+.tuning-dialog::backdrop{background:#08222d9e}
+@media(max-width:800px){.tuning-dialog{padding:22px}.tuning-grid{grid-template-columns:1fr;gap:10px}.tuning-header h2{font-size:23px}.tuning-fields{display:grid;grid-template-columns:1fr;gap:0}.tuning-footer{flex-direction:column;align-items:stretch}.preset-actions{justify-content:space-between}.preset-actions button{flex:1}.tuning-dialog .start-button{width:100%;justify-content:center}.top-actions{gap:5px}.topbar{gap:10px}.brand-sub{display:none}.brand{font-size:14px;gap:7px}.brand-icon{width:29px;height:33px}.utility-button{min-width:35px;min-height:35px}}
+@media(max-width:380px){.tuning-control{grid-template-columns:87px minmax(45px,1fr) 72px;gap:7px}.topbar{padding:16px 12px}.top-actions .icon-button{width:33px;height:33px}.brand{font-size:12px}.engine-metrics span{font-size:10px}}

@@ -10,13 +10,22 @@ const icons = {
   reset: icon('<path d="M3 10a9 9 0 1 1 2 8M3 4v6h6"/>'),
   help: icon('<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 4 2c-1.5 1-1.5 1-1.5 3m0 3h.01"/>'),
   play: icon('<path d="m9 5 11 7-11 7z" fill="currentColor" stroke="none"/>'),
+  tuning: icon('<path d="M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6"/>'),
+  sound: icon('<path d="M4 9h4l5-4v14l-5-4H4zM16 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>'),
+  muted: icon('<path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6m0-6-5 6"/>'),
 };
 
 export class Hud {
   private speed: HTMLElement;
   private distance: HTMLElement;
   private surface: HTMLElement;
-  private direction: HTMLElement;
+  private gear: HTMLElement;
+  private mode: HTMLButtonElement;
+  private rpmText: HTMLElement;
+  private tachometer: HTMLElement;
+  private shiftStatus: HTMLElement;
+  private displayedRpm?: number;
+  private drivetrainLabel: HTMLElement;
   private needle: SVGElement;
   private marker: SVGElement;
   private toastTimeout = 0;
@@ -31,7 +40,7 @@ export class Hud {
       <header class="topbar">
         <a class="brand" href="./" aria-label="Coastline Drive — Trang bắt đầu"><span class="brand-icon">${icons.road}</span><span>COASTLINE<span class="brand-sub">DRIVE / EXPLORER SERIES</span></span></a>
         <div class="mode-label"><span class="live-dot"></span>LÁI XE TỰ DO<span class="mode-divider"></span>VEN BIỂN</div>
-        <nav class="top-actions" aria-label="Điều khiển game"><button class="icon-button" id="help" aria-label="Hướng dẫn điều khiển" title="Hướng dẫn (H)">${icons.help}</button><button class="icon-button" id="fullscreen" aria-label="Toàn màn hình" title="Toàn màn hình">${icons.expand}</button><button class="icon-button" id="pause" aria-label="Tạm dừng" title="Tạm dừng (Esc)">${icons.pause}</button></nav>
+        <nav class="top-actions" aria-label="Điều khiển game"><button class="icon-button utility-button" id="tuning" aria-label="Mở tuning hộp số và động cơ (G)" title="Tuning (G)">${icons.tuning}</button><button class="icon-button utility-button" id="sound" aria-label="Âm thanh động cơ" aria-pressed="true" title="Âm thanh (M)">${icons.sound}</button><button class="icon-button" id="help" aria-label="Hướng dẫn điều khiển" title="Hướng dẫn (H)">${icons.help}</button><button class="icon-button" id="fullscreen" aria-label="Toàn màn hình" title="Toàn màn hình">${icons.expand}</button><button class="icon-button" id="pause" aria-label="Tạm dừng" title="Tạm dừng (Esc)">${icons.pause}</button></nav>
       </header>
       <main class="intro" id="intro">
         <div class="eyebrow"><span class="tiny-line"></span> CUNG ĐƯỜNG 01</div>
@@ -48,20 +57,42 @@ export class Hud {
           <div class="map-footer"><span>QUÃNG ĐƯỜNG</span><strong id="distance">0.00 <small>km</small></strong></div>
         </section>
         <div class="bottom-center"><div class="drive-message"><span class="live-dot"></span><span id="surface">ĐƯỜNG NHỰA</span><span class="message-divider">/</span> TỰ DO KHÁM PHÁ</div><div class="keyboard-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Lái xe</span><span><kbd>SPACE</kbd> Phanh tay</span><button id="camera" title="Đổi khoảng cách camera (C)"><kbd>C</kbd> Camera</button><button id="reset" title="Đưa xe lại lên đường (R)"><kbd>R</kbd> Đặt lại</button></div></div>
-        <section class="speedometer" aria-label="Đồng hồ tốc độ"><svg viewBox="0 0 240 190" class="speed-dial" aria-hidden="true"><path class="dial-track" d="M39 164a96 96 0 1 1 162 0"/><path class="dial-accent" d="M190 29a96 96 0 0 1 11 135"/><g class="dial-ticks">${Array.from({length:23},(_,i)=>{ const angle=(-145+i*290/22)*Math.PI/180; const r=i%2===0?84:88;return `<line x1="${120+Math.sin(angle)*r}" y1="${108-Math.cos(angle)*r}" x2="${120+Math.sin(angle)*94}" y2="${108-Math.cos(angle)*94}"/>`;}).join('')}</g><g id="speed-needle"><path d="M117 32 123 32 121 51 119 51Z" fill="#d9fc63"/></g></svg><div class="speed-readout"><span class="direction" id="direction">SẴN SÀNG</span><strong id="speed">000</strong><span class="speed-unit">KM/H</span></div><div class="car-name"><span class="car-dot"></span>GT–01 <span>/</span> SPORT COUPÉ</div></section>
+        <section class="speedometer drivetrain-panel" id="tachometer" aria-label="Tốc độ và vòng tua động cơ">
+          <div class="transmission-top"><button id="transmission-mode" title="Đổi Auto / Manual (T)" aria-label="Hộp số tự động. Nhấn để đổi số tay.">AUTO <kbd>T</kbd></button><span class="shift-light" id="shift-status">SẴN SÀNG</span></div>
+          <svg viewBox="0 0 240 190" class="speed-dial" aria-hidden="true"><path class="dial-track" d="M39 164a96 96 0 1 1 162 0"/><path class="dial-accent" d="M190 29a96 96 0 0 1 11 135"/><g class="dial-ticks">${Array.from({length:23},(_,i)=>{const a=(-145+i*290/22)*Math.PI/180;const r=i%2===0?84:88;return `<line x1="${120+Math.sin(a)*r}" y1="${108-Math.cos(a)*r}" x2="${120+Math.sin(a)*94}" y2="${108-Math.cos(a)*94}"/>`;}).join('')}</g><g id="rpm-needle"><path d="M117 32 123 32 121 54 119 54Z" fill="currentColor"/></g></svg>
+          <div class="drive-readout"><div class="gear-readout"><strong id="gear">1</strong><span>SỐ</span></div><div class="velocity-readout"><strong id="speed">000</strong><span>KM/H</span></div></div>
+          <div class="rpm-readout"><strong id="rpm">000</strong> <span>RPM</span></div>
+          <div class="gear-actions"><button id="shift-down" aria-label="Xuống số (Q)">− <kbd>Q</kbd></button><span id="drivetrain-label"></span><button id="shift-up" aria-label="Lên số (E)"><kbd>E</kbd> +</button></div>
+        </section>
       </div>
       <div class="touch-controls" aria-label="Điều khiển cảm ứng"><div><button data-drive="KeyA" aria-label="Rẽ trái">←</button><button data-drive="KeyD" aria-label="Rẽ phải">→</button></div><div><button data-drive="Space" aria-label="Phanh tay">P</button><button data-drive="KeyS" aria-label="Phanh hoặc lùi">↓</button><button class="touch-throttle" data-drive="KeyW" aria-label="Tăng tốc">↑</button></div></div>
       <div class="toast" id="toast" role="status"></div>
-      <div class="edition-label">EXPLORER SERIES <span>01 / MVP</span></div>
-      <dialog id="pause-dialog"><form method="dialog"><div class="eyebrow">DỪNG MỘT NHỊP</div><h2>Tạm nghỉ bên đường.</h2><p>Cung đường vẫn đang chờ bạn.</p><button class="start-button" id="resume" value="resume">Tiếp tục lái ${icons.play}</button><div class="dialog-actions"><button type="button" id="pause-reset">${icons.reset} Đưa xe về điểm đầu</button><button type="button" id="quality">Đồ họa: Cao</button><button type="button" id="pause-camera">${icons.camera} Camera: Gần</button></div><button class="text-button" value="resume">Esc để tiếp tục</button></form></dialog>
-      <dialog id="help-dialog"><form method="dialog"><div class="eyebrow">LÀM CHỦ CUNG ĐƯỜNG</div><h2>Cầm lái thôi.</h2><dl class="controls-list"><div><dt><kbd>W</kbd> / <kbd>↑</kbd></dt><dd>Tăng tốc</dd></div><div><dt><kbd>S</kbd> / <kbd>↓</kbd></dt><dd>Phanh, giữ để lùi</dd></div><div><dt><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd></dt><dd>Rẽ trái / phải</dd></div><div><dt><kbd>SPACE</kbd></dt><dd>Phanh tay</dd></div><div><dt><kbd>C</kbd> / <kbd>R</kbd></dt><dd>Đổi camera / Đặt lại xe</dd></div><div><dt><kbd>ESC</kbd> / <kbd>H</kbd></dt><dd>Tạm dừng / Hướng dẫn</dd></div></dl><p class="help-note">Ra khỏi đường nhựa sẽ giảm độ bám và tốc độ. Giảm ga trước khi vào cua để dễ kiểm soát xe.</p><button class="start-button">Đã hiểu ${icons.play}</button></form></dialog>
+      <div class="edition-label">EXPLORER SERIES <span>02 / TUNED</span></div>
+      <dialog id="pause-dialog" aria-labelledby="pause-title"><form method="dialog"><div class="eyebrow">DỪNG MỘT NHỊP</div><h2 id="pause-title">Tạm nghỉ bên đường.</h2><p>Cung đường vẫn đang chờ bạn.</p><button class="start-button" id="resume" value="resume">Tiếp tục lái ${icons.play}</button><div class="dialog-actions"><button type="button" id="pause-tuning">${icons.tuning} Tuning hộp số & động cơ</button><button type="button" id="pause-reset">${icons.reset} Đưa xe về điểm đầu</button><button type="button" id="quality">Đồ họa: Cao</button><button type="button" id="pause-camera">${icons.camera} Camera: Gần</button></div><div class="audio-controls"><label for="volume">Âm lượng</label><input id="volume" type="range" min="0" max="100" step="1" value="35"/><output for="volume" id="volume-value">35%</output></div><button class="text-button" value="resume">Esc để tiếp tục</button></form></dialog>
+      <dialog id="help-dialog" aria-labelledby="help-title"><form method="dialog"><div class="eyebrow">LÀM CHỦ CUNG ĐƯỜNG</div><h2 id="help-title">Cầm lái thôi.</h2>
+        <dl class="controls-list">
+          <div><dt><kbd>W</kbd> / <kbd>↑</kbd></dt><dd>Tăng ga theo số đang chọn</dd></div>
+          <div><dt><kbd>S</kbd> / <kbd>↓</kbd></dt><dd>Phanh; Auto: giữ để lùi</dd></div>
+          <div><dt><kbd>A</kbd><kbd>D</kbd> / <kbd>←</kbd><kbd>→</kbd></dt><dd>Lái trái / phải</dd></div>
+          <div><dt><kbd>SPACE</kbd></dt><dd>Phanh tay</dd></div>
+          <div><dt><kbd>T</kbd></dt><dd>Đổi Auto / Manual</dd></div>
+          <div><dt><kbd>E</kbd> / <kbd>Q</kbd></dt><dd>Lên / xuống số (Manual)</dd></div>
+          <div><dt><kbd>G</kbd> / <kbd>M</kbd></dt><dd>Tuning / Bật tắt âm thanh</dd></div>
+          <div><dt><kbd>C</kbd> / <kbd>R</kbd></dt><dd>Camera / Đặt lại xe</dd></div>
+          <div><dt><kbd>ESC</kbd> / <kbd>H</kbd></dt><dd>Tạm dừng / Hướng dẫn</dd></div>
+        </dl><p class="help-note">Manual: khi xe dừng, Q từ số 1 → N → R; W để lùi. E để chọn lại N rồi số 1. Số N cho phép lên ga tại chỗ. Ra khỏi đường nhựa sẽ giảm tốc độ.</p><button class="start-button">Đã hiểu ${icons.play}</button></form></dialog>
       <div class="error-screen" id="error-screen" hidden><h2>Chưa thể khởi động đồ họa 3D.</h2><p id="error-message">Hãy bật tăng tốc phần cứng và mở lại bằng Chrome hoặc Edge có hỗ trợ WebGL 2.</p><button class="start-button" id="reload">Thử lại</button></div>
     `;
     this.speed = document.querySelector('#speed')!;
     this.distance = document.querySelector('#distance')!;
     this.surface = document.querySelector('#surface')!;
-    this.direction = document.querySelector('#direction')!;
-    this.needle = document.querySelector('#speed-needle')!;
+    this.gear = document.querySelector('#gear')!;
+    this.mode = document.querySelector('#transmission-mode')!;
+    this.rpmText = document.querySelector('#rpm')!;
+    this.tachometer = document.querySelector('#tachometer')!;
+    this.shiftStatus = document.querySelector('#shift-status')!;
+    this.drivetrainLabel = document.querySelector('#drivetrain-label')!;
+    this.needle = document.querySelector('#rpm-needle')!;
     this.marker = document.querySelector('#map-marker')!;
     this.pauseDialog = document.querySelector('#pause-dialog')!;
     this.helpDialog = document.querySelector('#help-dialog')!;
@@ -70,11 +101,34 @@ export class Hud {
   update(vehicle: Vehicle, onRoad: boolean) {
     const kmh = Math.round(Math.abs(vehicle.speed) * 3.6);
     this.speed.textContent = String(kmh).padStart(3, '0');
-    this.direction.textContent = kmh < 1 ? 'SẴN SÀNG' : vehicle.speed < 0 ? 'LÙI' : 'TIẾN';
+    const transmission = vehicle.transmission;
+    this.drivetrainLabel.textContent = `${vehicle.definition.name} / ${vehicle.definition.transmission.gearCount}-SPEED`;
+    this.gear.textContent = transmission.gearLabel;
+    this.mode.innerHTML = `${transmission.mode === 'automatic' ? 'AUTO' : 'MANUAL'} <kbd>T</kbd>`;
+    this.mode.setAttribute('aria-label', `Hộp số ${transmission.mode === 'automatic' ? 'tự động' : 'số tay'}. Nhấn để đổi chế độ.`);
+    const hot = transmission.rpm > transmission.redlineRpm * 0.88;
+    const shift = transmission.rpm > transmission.redlineRpm * 0.94;
+    this.tachometer.classList.toggle('near-redline', hot);
+    this.tachometer.classList.toggle('shift-now', shift && !transmission.isShifting);
+    this.shiftStatus.textContent = transmission.isShifting ? transmission.isRevMatching ? 'BÙ TUA' : 'SANG SỐ' : shift ? 'LÊN SỐ' : transmission.currentGear === 0 ? 'SỐ N' : 'SẴN SÀNG';
+    document.body.classList.toggle('manual-mode', transmission.mode === 'manual');
     this.distance.innerHTML = `${(vehicle.distance / 1000).toFixed(2)} <small>km</small>`;
     this.surface.textContent = onRoad ? 'ĐƯỜNG NHỰA' : 'NGOÀI ĐƯỜNG';
-    this.needle.setAttribute('transform', `rotate(${-145 + Math.min(kmh / 220, 1) * 290} 120 108)`);
     this.marker.setAttribute('transform', `translate(${(vehicle.x + 370) * 0.2} ${(vehicle.z + 530) * 0.16}) rotate(${180 - vehicle.heading * 180 / Math.PI})`);
+  }
+
+  animateRpm(vehicle: Vehicle, dt: number) {
+    this.displayedRpm ??= vehicle.transmission.rpm;
+    this.displayedRpm += (vehicle.transmission.rpm - this.displayedRpm) * (1 - Math.exp(-14 * dt));
+    this.needle.setAttribute('transform', `rotate(${-145 + Math.min(this.displayedRpm / vehicle.transmission.redlineRpm, 1) * 290} 120 108)`);
+    this.rpmText.textContent = String(Math.round(this.displayedRpm / 10) * 10);
+  }
+
+  setSound(enabled: boolean, running: boolean) {
+    const button = document.querySelector<HTMLButtonElement>('#sound')!;
+    button.innerHTML = enabled ? icons.sound : icons.muted;
+    button.setAttribute('aria-pressed', String(enabled));
+    button.title = enabled ? running ? 'Tắt âm thanh (M)' : 'Bật / thử lại âm thanh (M)' : 'Bật âm thanh (M)';
   }
 
   start() {

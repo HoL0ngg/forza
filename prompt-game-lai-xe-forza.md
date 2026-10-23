@@ -1,7 +1,5 @@
 # Prompt dùng cho Codex — Xây dựng Web Game Lái Xe (phong cách Forza Horizon)
 
-> Copy toàn bộ nội dung bên dưới và dán cho Codex (hoặc bất kỳ coding agent nào). Bạn có thể chỉnh sửa các phần in đậm để phù hợp với sở thích cá nhân (đồ họa 2D/3D, số lượng xe, v.v.)
-
 ---
 
 ## PROMPT

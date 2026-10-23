@@ -13,7 +13,8 @@ export class Input {
 
   constructor(onAction: (code: string) => void, onBlur: () => void) {
     window.addEventListener('keydown', (event) => {
-      if ((event.target as HTMLElement).closest('dialog, button, input, select')) return;
+      if ((event.target as HTMLElement | null)?.closest?.('dialog, button, input, select, textarea, [contenteditable="true"]')) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (drivingKeys.has(event.code)) event.preventDefault();
       this.keys.add(event.code);
       if (!event.repeat) onAction(event.code);
