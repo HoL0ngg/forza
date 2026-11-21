@@ -45,7 +45,7 @@ export class Hud {
       <main class="intro" id="intro">
         <div class="eyebrow"><span class="tiny-line"></span> CUNG ĐƯỜNG 01</div>
         <h1>THE COAST<br>IS YOURS<span>.</span></h1>
-        <p>Một chiếc xe. Một cung đường.<br>Cứ lái theo cách của bạn.</p>
+        <p>Khám phá bờ biển. Xây bộ sưu tập xe.<br>Đua tính giờ, kiếm credits và tìm chiếc xe của bạn.</p>
         <button class="start-button" id="start">Bắt đầu lái ${icons.play}</button>
         <div class="intro-meta"><span>${(trackLength / 1000).toFixed(1)} KM ĐƯỜNG VÒNG</span><span>KHÁM PHÁ TỰ DO</span></div>
       </main>
@@ -78,6 +78,7 @@ export class Hud {
           <div><dt><kbd>T</kbd></dt><dd>Đổi Auto / Manual</dd></div>
           <div><dt><kbd>E</kbd> / <kbd>Q</kbd></dt><dd>Lên / xuống số (Manual)</dd></div>
           <div><dt><kbd>G</kbd> / <kbd>M</kbd></dt><dd>Tuning / Bật tắt âm thanh</dd></div>
+          <div><dt><kbd>B</kbd> / <kbd>F</kbd></dt><dd>Garage & shop / Đua tính giờ</dd></div>
           <div><dt><kbd>C</kbd> / <kbd>R</kbd></dt><dd>Camera / Đặt lại xe</dd></div>
           <div><dt><kbd>ESC</kbd> / <kbd>H</kbd></dt><dd>Tạm dừng / Hướng dẫn</dd></div>
         </dl><p class="help-note">Manual: khi xe dừng, Q từ số 1 → N → R; W để lùi. E để chọn lại N rồi số 1. Số N cho phép lên ga tại chỗ. Ra khỏi đường nhựa sẽ giảm tốc độ.</p><button class="start-button">Đã hiểu ${icons.play}</button></form></dialog>

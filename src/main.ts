@@ -1,6 +1,7 @@
 import './style.css';
 import './ui/drivetrain.css';
 import './ui/tuning.css';
+import './ui/garage.css';
 import { Game } from './core/game';
 import { Hud } from './ui/hud';
 

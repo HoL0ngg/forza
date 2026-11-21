@@ -11,6 +11,10 @@ export class Car {
   private brakeMaterial = new THREE.MeshStandardMaterial({ color: '#ff3c32', emissive: '#e42214', emissiveIntensity: 0.4 });
 
   constructor(readonly definition: VehicleDefinition = gt01) {
+    const preset = definition.visual.proceduralPreset;
+    const roofRear = preset === 'hatchback' || preset === 'rally' ? -1.35 : preset === 'supercar' ? -0.85 : -0.6;
+    const roofFront = preset === 'muscle' ? 0.05 : preset === 'supercar' ? 0.6 : 0.3;
+    const roofHeight = preset === 'muscle' ? 1.48 : 1.57;
     const paint = new THREE.MeshStandardMaterial({ color: definition.visual.bodyColor, metalness: 0.48, roughness: 0.28 });
     const glass = new THREE.MeshStandardMaterial({ color: '#152e37', metalness: 0.45, roughness: 0.18 });
     const black = new THREE.MeshStandardMaterial({ color: '#162124', roughness: 0.65 });
@@ -34,12 +38,12 @@ export class Car {
     const cabin = new THREE.BufferGeometry();
     cabin.setAttribute('position', new THREE.Float32BufferAttribute([
       -0.83, 0.98, -1.08, 0.83, 0.98, -1.08, 0.83, 0.98, 0.91, -0.83, 0.98, 0.91,
-      -0.66, 1.57, -0.6, 0.66, 1.57, -0.6, 0.66, 1.57, 0.3, -0.66, 1.57, 0.3,
+      -0.66, roofHeight, roofRear, 0.66, roofHeight, roofRear, 0.66, roofHeight, roofFront, -0.66, roofHeight, roofFront,
     ], 3));
     cabin.setIndex([0,4,5,0,5,1,1,5,6,1,6,2,2,6,7,2,7,3,3,7,4,3,4,0,4,7,6,4,6,5]);
     cabin.computeVertexNormals();
     this.body.add(new THREE.Mesh(cabin, glass));
-    box(1.37, 0.075, 0.95, 0, 1.59, -0.16, paint);
+    box(1.37, 0.075, roofFront - roofRear + 0.05, 0, roofHeight + 0.02, (roofFront + roofRear) / 2, paint);
     for (const side of [-1, 1]) {
       box(0.07, 0.57, 0.095, side * 0.76, 1.27, -0.32, paint).rotation.z = side * 0.22;
       box(0.25, 0.15, 0.28, side * 1.04, 1.14, 0.56, paint);
@@ -47,9 +51,18 @@ export class Car {
       box(0.65, 0.08, 0.045, side * 0.56, 0.91, -2.16, this.brakeMaterial);
       box(0.28, 0.17, 0.06, side * 0.64, 0.57, 2.19, black);
       box(0.18, 0.13, 0.19, side * 0.66, 0.46, -2.2, chrome);
-      box(0.06, 0.18, 0.22, side * 0.7, 1.2, -1.9, black);
+      if (preset === 'gt01' || preset === 'rally' || preset === 'supercar') box(0.06, 0.18, 0.22, side * 0.7, 1.2, -1.9, black);
     }
-    box(1.91, 0.08, 0.31, 0, 1.33, -1.92, black);
+    if (preset === 'gt01' || preset === 'rally' || preset === 'supercar') box(preset === 'supercar' ? 2.05 : 1.91, 0.08, 0.31, 0, 1.33, -1.92, black);
+    if (preset === 'muscle') box(0.72, 0.18, 0.85, 0, 1.12, 1.25, black);
+    if (preset === 'rally') {
+      for (const x of [-0.55, -0.18, 0.18, 0.55]) box(0.26, 0.22, 0.12, x, 0.87, 2.24, lamp);
+      box(1.55, 0.06, 1.4, 0, roofHeight + 0.12, -0.45, black);
+    }
+    if (preset === 'supercar') {
+      for (const x of [-0.89, 0.89]) box(0.18, 0.3, 0.8, x, 0.85, -0.95, black);
+      box(1.65, 0.07, 1.1, 0, 0.98, -1.35, black);
+    }
     box(0.56, 0.18, 0.045, 0, 0.66, -2.185, chrome);
     box(0.92, 0.18, 0.06, 0, 0.59, 2.19, black);
     const tireGeometry = new THREE.CylinderGeometry(definition.wheelRadius, definition.wheelRadius, 0.27, 16);

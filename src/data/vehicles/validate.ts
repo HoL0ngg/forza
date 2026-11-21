@@ -47,6 +47,8 @@ export function validateVehicleDefinition(value: unknown): VehicleDefinition {
   text(vehicle.id, 'vehicle.id');
   text(vehicle.name, 'vehicle.name');
   text(vehicle.brand, 'vehicle.brand');
+  const price = finite(vehicle.price, 'vehicle.price', { min: 0 });
+  if (!Number.isSafeInteger(price)) throw new Error('vehicle.price must be a safe integer.');
   if (vehicle.model3dPath !== null) {
     const modelPath = text(vehicle.model3dPath, 'vehicle.model3dPath');
     if (modelPath.includes('..') || modelPath.includes('\\') || !modelPath.toLowerCase().endsWith('.glb')) {
@@ -132,7 +134,7 @@ export function validateVehicleDefinition(value: unknown): VehicleDefinition {
   text(sound.engineSampleSet, 'vehicle.sound.engineSampleSet');
   text(sound.exhaustType, 'vehicle.sound.exhaustType');
   const visual = record(vehicle.visual, 'vehicle.visual');
-  oneOf(visual.proceduralPreset, ['gt01'] as const, 'vehicle.visual.proceduralPreset');
+  oneOf(visual.proceduralPreset, ['gt01', 'hatchback', 'rally', 'muscle', 'supercar'] as const, 'vehicle.visual.proceduralPreset');
   assertRgbHex(visual.bodyColor, 'vehicle.visual.bodyColor');
 
   return deepCloneAndFreeze(value) as VehicleDefinition;

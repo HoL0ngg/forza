@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneConfig, defaultConfig, engineStats, speedAtRpm, validateConfig } from '../src/tuning/tuning';
+import { cloneConfig, createDefaultTuning, defaultConfig, engineStats, speedAtRpm, validateConfig } from '../src/tuning/tuning';
 import { loadPreset, PRESET_KEY, savePreset } from '../src/tuning/storage';
 import { Vehicle, neutralInput } from '../src/physics/vehicle';
+import { gt01 } from '../src/data/vehicles/gt01';
+import { vehicleDefinitions } from '../src/data/vehicles/registry';
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -49,10 +51,40 @@ test('malformed/unsupported presets and blocked storage recover without corrupti
     assert.deepEqual(loadPreset(storage).config, cloneConfig());
   }
   savePreset(cloneConfig(), storage);
-  const before = storage.getItem(PRESET_KEY);
+  const before = storage.getItem(`${PRESET_KEY}:${gt01.id}`);
   assert.throws(() => savePreset({ ...cloneConfig(), redlineRpm: 100 }, storage));
-  assert.equal(storage.getItem(PRESET_KEY), before);
+  assert.equal(storage.getItem(`${PRESET_KEY}:${gt01.id}`), before);
   const blocked = { getItem() { throw new Error('SecurityError'); }, setItem() { throw new Error('QuotaExceededError'); } };
   assert.equal(loadPreset(blocked).status, 'unavailable');
   assert.throws(() => savePreset(cloneConfig(), blocked), /không cho lưu/);
+});
+
+test('legacy GT01 presets migrate without deletion and retain readability when migration writes fail', () => {
+  const storage = memoryStorage();
+  const legacy = JSON.stringify({ version: 1, config: { ...cloneConfig(), finalDrive: 4.1 } });
+  storage.setItem(PRESET_KEY, legacy);
+  const migrated = loadPreset(storage);
+  assert.equal(migrated.status, 'loaded');
+  assert.equal(migrated.config.finalDrive, 4.1);
+  assert.equal(storage.getItem(PRESET_KEY), legacy);
+  assert.ok(storage.getItem(`${PRESET_KEY}:${gt01.id}`));
+  const readOnly = { getItem: (key: string) => key === PRESET_KEY ? legacy : null, setItem() { throw new Error('QuotaExceededError'); } };
+  assert.equal(loadPreset(readOnly).status, 'loaded');
+  assert.equal(loadPreset(readOnly).config.finalDrive, 4.1);
+});
+
+test('presets and validation use the selected vehicle without leaking legacy GT01 tuning', () => {
+  const storage = memoryStorage();
+  const other = vehicleDefinitions.find(vehicle => vehicle.id !== gt01.id)!;
+  assert.ok(other);
+  storage.setItem(PRESET_KEY, JSON.stringify({ version: 1, config: { ...cloneConfig(), finalDrive: 4.2 } }));
+  assert.equal(loadPreset(storage, other).status, 'missing');
+  assert.deepEqual(loadPreset(storage, other).config, createDefaultTuning(other));
+  const config = { ...createDefaultTuning(other), finalDrive: 4.5 };
+  savePreset(config, storage, other);
+  assert.deepEqual(loadPreset(storage, other).config, config);
+  assert.equal(loadPreset(storage).config.finalDrive, 4.2);
+  savePreset({ ...cloneConfig(), finalDrive: 4.7 }, storage);
+  assert.equal(loadPreset(storage).config.finalDrive, 4.7);
+  assert.equal(loadPreset(storage, other).config.finalDrive, 4.5);
 });

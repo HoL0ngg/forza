@@ -69,7 +69,7 @@ export class TuningPanel {
     this.button('close-tuning', () => this.dialog.close('cancel'));
     this.button('reset-tuning', () => { this.draft = createDefaultTuning(this.vehicle); this.sync(); this.showMessage('Đã đưa bản đang chỉnh về mặc định. Bấm áp dụng để dùng.'); });
     this.button('load-preset', () => {
-      const loaded = loadPreset();
+      const loaded = loadPreset(undefined, this.vehicle);
       if (loaded.status !== 'loaded') {
         this.showMessage(loaded.status === 'missing' ? 'Chưa có preset đã lưu.' : 'Không đọc được preset hợp lệ. Bản đang chỉnh được giữ nguyên.', true);
         return;
@@ -77,7 +77,7 @@ export class TuningPanel {
       this.draft = loaded.config; this.sync(); this.showMessage('Đã tải preset vào bảng. Bấm áp dụng để dùng.');
     });
     this.button('save-preset', () => {
-      try { savePreset(this.draft); this.showMessage('Đã lưu preset trên trình duyệt này. Bấm áp dụng để dùng ngay.'); }
+      try { savePreset(this.draft, undefined, this.vehicle); this.showMessage('Đã lưu preset riêng cho xe này. Bấm áp dụng để dùng ngay.'); }
       catch (error) { this.showMessage((error as Error).message, true); }
     });
   }
@@ -86,6 +86,11 @@ export class TuningPanel {
 
   open(config: TuningConfig, vehicle: VehicleDefinition = gt01) {
     this.vehicle = vehicle;
+    const limits = getTuningLimits(vehicle);
+    this.dialog.querySelectorAll<HTMLInputElement>('[data-config="redlineRpm"]').forEach(input => {
+      input.min = String(limits.redlineRpm.min);
+      input.max = String(limits.redlineRpm.max);
+    });
     this.current = cloneConfig(config);
     this.draft = cloneConfig(config);
     this.dialog.querySelector('#tuning-vehicle')!.textContent = `${vehicle.name} / GARAGE`;

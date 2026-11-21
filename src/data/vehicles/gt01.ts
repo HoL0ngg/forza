@@ -5,6 +5,7 @@ const definition = {
   id: 'gt01',
   name: 'GT–01',
   brand: 'Coastline',
+  price: 0,
   model3dPath: null,
   mass: 1350,
   dimensions: { length: 4.36, width: 1.97, height: 1.59 },

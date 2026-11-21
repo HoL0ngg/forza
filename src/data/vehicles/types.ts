@@ -1,6 +1,6 @@
 export type EngineAspiration = 'NA' | 'Turbo' | 'Supercharged' | 'Electric';
 export type Drivetrain = 'FWD' | 'RWD' | 'AWD';
-export type ProceduralVehiclePreset = 'gt01';
+export type ProceduralVehiclePreset = 'gt01' | 'hatchback' | 'rally' | 'muscle' | 'supercar';
 
 export interface Vector3Config {
   readonly x: number;
@@ -92,6 +92,7 @@ export interface VehicleDefinition {
   readonly id: string;
   readonly name: string;
   readonly brand: string;
+  readonly price: number;
   readonly model3dPath: string | null;
   readonly mass: number;
   readonly dimensions: VehicleDimensions;

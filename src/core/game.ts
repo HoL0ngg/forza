@@ -9,14 +9,21 @@ import { registerGameTools } from './webmcp';
 import { loadPreset } from '../tuning/storage';
 import { TuningPanel } from '../ui/tuning-panel';
 import { EngineAudio } from '../audio/engine-audio';
-import { DEFAULT_VEHICLE_ID } from '../data/vehicles/registry';
+import { getVehicleDefinition } from '../data/vehicles/registry';
 import { createVehicleRuntime } from '../vehicles/vehicle-factory';
+import { Garage } from '../ui/garage';
+import { loadProfile, saveProfile, purchaseVehicle, selectVehicle, rewardRace, RACE_REWARD } from '../progression/profile';
+import type { PlayerProfile } from '../progression/profile';
+import { TimeTrial } from '../racing/time-trial';
+import { RaceMarkers } from '../racing/race-markers';
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
   private world = new World();
-  private savedSetup = loadPreset();
-  private vehicleRuntime = createVehicleRuntime(spawn, DEFAULT_VEHICLE_ID, this.savedSetup.config);
+  private savedProfile = loadProfile();
+  private profile = this.savedProfile.profile;
+  private savedSetup = loadPreset(undefined, getVehicleDefinition(this.profile.selectedVehicleId));
+  private vehicleRuntime = createVehicleRuntime(spawn, this.profile.selectedVehicleId, this.savedSetup.config);
   private vehicle = this.vehicleRuntime.vehicle;
   private car = this.vehicleRuntime.car;
   private camera = new ChaseCamera();
@@ -33,6 +40,10 @@ export class Game {
   private tuning: TuningPanel;
   private audio = new EngineAudio();
   private audioNoticeShown = false;
+  private garage: Garage;
+  private trial = new TimeTrial();
+  private raceMarkers = new RaceMarkers();
+  private sessionTunings = new Map<string, ReturnType<typeof loadPreset>['config']>();
 
   constructor(private hud: Hud) {
     this.renderer = new THREE.WebGLRenderer({ canvas: document.querySelector<HTMLCanvasElement>('#game')!, antialias: true, powerPreference: 'high-performance' });
@@ -43,6 +54,7 @@ export class Game {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
     this.world.scene.add(this.car.mesh);
+    this.world.scene.add(this.raceMarkers.mesh);
     this.input = new Input((code) => this.action(code), () => {
       if (this.started && !this.paused) this.pause();
     });
@@ -52,9 +64,17 @@ export class Game {
     this.hud.update(this.vehicle, true);
     this.tuning = new TuningPanel((config) => {
       this.vehicle.transmission.applyConfig(config, this.vehicle.speed);
+      this.sessionTunings.set(this.vehicle.definition.id, config);
       this.hud.update(this.vehicle, this.onRoad);
       this.hud.toast('Đã áp dụng cấu hình hộp số và động cơ.');
     });
+    this.garage = new Garage(() => this.profile, id => this.commitProfile(purchaseVehicle(this.profile, id)), id => this.changeVehicle(id));
+    const controls = document.createElement('div');
+    controls.className = 'progress-actions';
+    controls.innerHTML = '<button id="open-garage">Garage & shop <kbd>B</kbd></button><button id="start-trial">Đua tính giờ <kbd>F</kbd></button><button id="cancel-trial" hidden>Hủy đua</button>';
+    document.body.append(controls);
+    const status = document.createElement('div'); status.className = 'progress-status'; status.id = 'progress-status'; status.setAttribute('role', 'status'); document.body.append(status);
+    this.updateProgress();
     this.bindUI();
     registerGameTools({
       status: () => ({
@@ -77,8 +97,58 @@ export class Game {
       this.audio.setActive(false);
       this.hud.error('Kết nối đồ họa bị gián đoạn. Nhấn Thử lại để khởi động lại game.');
     });
-    window.addEventListener('pagehide', () => { this.audio.setActive(false); this.audio.dispose(); this.vehicleRuntime.dispose(); });
-    if (import.meta.hot) import.meta.hot.dispose(() => { this.audio.dispose(); this.vehicleRuntime.dispose(); });
+    window.addEventListener('pagehide', () => { this.audio.setActive(false); this.audio.dispose(); this.vehicleRuntime.dispose(); this.garage.dispose(); this.raceMarkers.dispose(); });
+    if (import.meta.hot) import.meta.hot.dispose(() => { this.audio.dispose(); this.vehicleRuntime.dispose(); this.garage.dispose(); this.raceMarkers.dispose(); });
+  }
+
+  private commitProfile(next: PlayerProfile) {
+    saveProfile(next);
+    this.profile = next;
+    this.updateProgress();
+  }
+
+  private changeVehicle(id: string) {
+    const next = selectVehicle(this.profile, id);
+    const definition = getVehicleDefinition(id);
+    const setup = this.sessionTunings.get(id) ?? loadPreset(undefined, definition).config;
+    const runtime = createVehicleRuntime(spawn, id, setup);
+    try { this.commitProfile(next); }
+    catch (error) { runtime.dispose(); throw error; }
+    this.sessionTunings.set(this.vehicle.definition.id, this.vehicle.transmission.currentConfig);
+    this.trial.cancel();
+    this.world.scene.remove(this.car.mesh);
+    this.vehicleRuntime.dispose();
+    this.vehicleRuntime = runtime; this.vehicle = runtime.vehicle; this.car = runtime.car;
+    this.world.scene.add(this.car.mesh);
+    this.audio.setActive(false);
+    this.onRoad = true; this.input.clear(); this.accumulator = 0;
+    this.car.update(this.vehicle, false); this.camera.update(this.vehicle, 0, !this.started, true);
+    this.world.update(this.vehicle.x, this.vehicle.z); this.hud.update(this.vehicle, true);
+    this.raceMarkers.update(this.trial); this.updateProgress();
+  }
+
+  private openGarage() {
+    if (this.paused) return;
+    this.paused = true; this.input.clear(); this.accumulator = 0;
+    this.audio.setActive(false); document.body.classList.add('paused');
+    this.garage.open();
+  }
+
+  private startTrial() {
+    if (this.paused) return;
+    if (!this.started) this.begin();
+    this.reset(true); this.trial.start(); this.raceMarkers.update(this.trial); this.updateProgress();
+    this.hud.toast('Theo cổng sáng trên đường. Qua đủ checkpoint để nhận 10.000 CR.');
+  }
+
+  private updateProgress() {
+    const status = document.querySelector('#progress-status');
+    if (!status) return;
+    const best = this.profile.bestTimeMs === null ? 'Chưa có kỷ lục' : `Kỷ lục ${(this.profile.bestTimeMs / 1000).toFixed(2)}s`;
+    status.textContent = this.trial.active
+      ? `${(this.trial.elapsedMs / 1000).toFixed(1)}s · Checkpoint ${Math.min(this.trial.checkpointIndex + 1, this.trial.checkpointCount)}/${this.trial.checkpointCount} · ${this.profile.credits.toLocaleString('vi-VN')} CR`
+      : `${this.vehicle.definition.brand} ${this.vehicle.definition.name} · ${this.profile.credits.toLocaleString('vi-VN')} CR · ${best}`;
+    document.querySelector<HTMLButtonElement>('#cancel-trial')!.hidden = !this.trial.active;
   }
 
   private bindUI() {
@@ -87,6 +157,9 @@ export class Game {
       (event.currentTarget as HTMLElement).blur();
     });
     click('start', () => this.begin());
+    click('open-garage', () => this.openGarage());
+    click('start-trial', () => this.startTrial());
+    click('cancel-trial', () => { this.trial.cancel(); this.raceMarkers.update(this.trial); this.updateProgress(); this.hud.toast('Đã hủy cuộc đua.'); });
     click('pause', () => this.pause());
     click('help', () => this.help());
     click('camera', () => this.changeCamera());
@@ -124,9 +197,9 @@ export class Game {
       if (request) void request.catch(() => this.hud.toast('Trình duyệt chưa cho phép toàn màn hình.'));
       else this.hud.toast('Trình duyệt này chưa hỗ trợ toàn màn hình.');
     });
-    for (const dialog of [this.hud.pauseDialog, this.hud.helpDialog, this.tuning.dialog]) {
+    for (const dialog of [this.hud.pauseDialog, this.hud.helpDialog, this.tuning.dialog, this.garage.dialog]) {
       dialog.addEventListener('close', () => {
-        this.paused = [this.hud.pauseDialog, this.hud.helpDialog, this.tuning.dialog].some((d) => d.open);
+        this.paused = [this.hud.pauseDialog, this.hud.helpDialog, this.tuning.dialog, this.garage.dialog].some((d) => d.open);
         this.input.clear();
         this.accumulator = 0;
         document.body.classList.toggle('paused', this.paused);
@@ -139,6 +212,8 @@ export class Game {
   }
 
   private action(code: string) {
+    if (code === 'KeyB' && !this.paused) this.openGarage();
+    if (code === 'KeyF' && !this.paused) this.startTrial();
     if (code === 'Escape' && this.started && !this.paused) this.pause();
     if (code === 'KeyH' && !this.paused) this.help();
     if (code === 'KeyM') this.toggleSound();
@@ -166,6 +241,7 @@ export class Game {
     this.hud.toast('Giữ W hoặc ↑ để tăng tốc. Chúc bạn có một chuyến đi đẹp!');
     if (this.savedSetup.status === 'loaded') this.hud.toast('Đã tải preset đã lưu. Giữ W hoặc ↑ để bắt đầu lái.');
     if (this.savedSetup.status === 'invalid') this.hud.toast('Preset không hợp lệ; đang dùng cấu hình mặc định.');
+    if (this.savedProfile.status === 'invalid' || this.savedProfile.status === 'unavailable') this.hud.toast('Không đọc được tiến trình hợp lệ; đang chơi với hồ sơ mặc định.');
   }
 
   private pause() {
@@ -225,6 +301,7 @@ export class Game {
   }
 
   private reset(toStart = false) {
+    this.trial.cancel(); this.raceMarkers.update(this.trial); this.updateProgress();
     this.vehicle.reset(toStart ? spawn : roadPose(nearestRoad(this.vehicle.x, this.vehicle.z).index));
     this.onRoad = true;
     this.input.clear();
@@ -247,6 +324,13 @@ export class Game {
         while (this.accumulator >= fixedStep) {
           this.onRoad = nearestRoad(this.vehicle.x, this.vehicle.z).distance < ROAD_WIDTH / 2;
           this.vehicle.update(controls, fixedStep, this.onRoad);
+          const result = this.trial.update(this.vehicle, fixedStep);
+          if (result) {
+            const next = rewardRace(this.profile, result.elapsedMs);
+            this.profile = next;
+            try { saveProfile(next); this.hud.toast(`Hoàn thành ${(result.elapsedMs / 1000).toFixed(2)} giây · +${RACE_REWARD} CR`); }
+            catch { this.hud.toast(`+${RACE_REWARD} CR trong phiên này. Không lưu được tiến trình; đừng đóng trang.`); }
+          }
           this.accumulator -= fixedStep;
         }
         // Scenery has no collisions in stage 1. Keep the playable area on the flat land.
@@ -258,6 +342,7 @@ export class Game {
       this.audio.update({ rpm: drivetrain.rpm, idleRpm: this.vehicle.definition.engine.idleRpm, redlineRpm: drivetrain.redlineRpm, throttle: this.vehicle.engineThrottle, isShifting: drivetrain.isShifting, isRevMatching: drivetrain.isRevMatching, shiftSerial: drivetrain.shiftSerial, lastShift: drivetrain.lastShift });
       this.camera.update(this.vehicle, dt, !this.started);
       this.world.update(this.vehicle.x, this.vehicle.z);
+      this.raceMarkers.update(this.trial);
       this.hudTimer += dt;
       this.debugTimer += dt;
       if (this.debug && this.debugTimer >= 0.5 && this.started && !this.paused) {
@@ -265,7 +350,7 @@ export class Game {
         console.debug('[drivetrain]', { gear: t.gearLabel, rpm: Math.round(t.rpm), mode: t.mode, clutch: t.isClutchEngaged, speedKmh: Math.round(this.vehicle.speed * 3.6) });
         this.debugTimer = 0;
       }
-      if (this.hudTimer > 0.08) { this.hud.update(this.vehicle, this.onRoad); this.hudTimer = 0; }
+      if (this.hudTimer > 0.08) { this.hud.update(this.vehicle, this.onRoad); this.updateProgress(); this.hudTimer = 0; }
       this.renderer.render(this.world.scene, this.camera.camera);
     });
   }
