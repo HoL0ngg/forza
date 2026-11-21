@@ -88,3 +88,38 @@ test('presets and validation use the selected vehicle without leaking legacy GT0
   assert.equal(loadPreset(storage).config.finalDrive, 4.7);
   assert.equal(loadPreset(storage, other).config.finalDrive, 4.5);
 });
+
+test('retired vehicle presets are readable under the mapped ID and never overwrite an active preset', () => {
+  const storage = memoryStorage();
+  const retiredKey = `${PRESET_KEY}:coast-rally`;
+  const active = vehicleDefinitions.find(vehicle => vehicle.id === 'sakura-sprint')!;
+  const config = { ...cloneConfig(), finalDrive: 4.35, redlineRpm: 6800 };
+  const raw = JSON.stringify({ version: 1, config });
+  storage.setItem(retiredKey, raw);
+
+  assert.deepEqual(loadPreset(storage, active), { status: 'loaded', config });
+  assert.equal(storage.getItem(retiredKey), raw);
+  assert.equal(loadPreset(storage, vehicleDefinitions[0]).status, 'missing');
+
+  const current = createDefaultTuning(active);
+  savePreset(current, storage, active);
+  assert.deepEqual(loadPreset(storage, active), { status: 'loaded', config: current });
+  assert.equal(storage.getItem(retiredKey), raw);
+});
+
+test('invalid retired vehicle preset falls back to stock without altering either storage key', () => {
+  const storage = memoryStorage();
+  const retiredPresets = [
+    ['coast-rally', 'sakura-sprint', { ...cloneConfig(), redlineRpm: 5100 }],
+    ['ferro-gt', 'sakura-rs', { ...cloneConfig(), gearRatios: [9] }],
+  ] as const;
+  for (const [id, replacementId, config] of retiredPresets) {
+    const active = vehicleDefinitions.find(vehicle => vehicle.id === replacementId)!;
+    const retiredKey = `${PRESET_KEY}:${id}`;
+    const raw = JSON.stringify({ version: 1, config });
+    storage.setItem(retiredKey, raw);
+    assert.deepEqual(loadPreset(storage, active), { status: 'invalid', config: createDefaultTuning(active) });
+    assert.equal(storage.getItem(retiredKey), raw);
+    assert.equal(storage.getItem(`${PRESET_KEY}:${active.id}`), null);
+  }
+});

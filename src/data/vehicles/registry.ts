@@ -1,10 +1,10 @@
 import { gt01 } from './gt01';
-import { coastRally, sakuraSprint, sakuraRs, ferroV8, ferroGt } from './catalog';
+import { vekrivarPico, sovarethAureline, talvorixVeltrum } from './catalog';
 import type { VehicleDefinition } from './types';
 
 export const DEFAULT_VEHICLE_ID = gt01.id;
 
-export const vehicleDefinitions: readonly VehicleDefinition[] = Object.freeze([gt01, coastRally, sakuraSprint, sakuraRs, ferroV8, ferroGt]);
+export const vehicleDefinitions: readonly VehicleDefinition[] = Object.freeze([gt01, vekrivarPico, sovarethAureline, talvorixVeltrum]);
 
 const definitionsById = new Map(vehicleDefinitions.map(definition => [definition.id, definition]));
 

@@ -13,7 +13,9 @@ export class Input {
 
   constructor(onAction: (code: string) => void, onBlur: () => void) {
     window.addEventListener('keydown', (event) => {
-      if ((event.target as HTMLElement | null)?.closest?.('dialog, button, input, select, textarea, [contenteditable="true"]')) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.('dialog, input, select, textarea, [contenteditable="true"]')) return;
+      if ((event.code === 'Space' || event.code === 'Enter') && target?.closest?.('button, a[href]')) return;
       if (event.ctrlKey || event.metaKey || event.altKey) return;
       if (drivingKeys.has(event.code)) event.preventDefault();
       this.keys.add(event.code);

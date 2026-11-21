@@ -1,6 +1,7 @@
 import { createDefaultTuning, validateConfig } from './tuning';
 import type { TuningConfig } from './tuning';
 import { gt01 } from '../data/vehicles/gt01';
+import { getRetiredVehicleId } from '../data/vehicles/legacy';
 import type { VehicleDefinition } from '../data/vehicles/types';
 
 export const PRESET_KEY = 'coastline-drive:tuning:v1';
@@ -16,9 +17,13 @@ export function loadPreset(storage?: PresetStorage, vehicle: VehicleDefinition =
   try {
     source = storage ?? window.localStorage;
     raw = source.getItem(key);
-    if (raw === null && vehicle.id === gt01.id) {
-      raw = source.getItem(PRESET_KEY);
-      legacy = raw !== null;
+    if (raw === null) {
+      const retiredId = getRetiredVehicleId(vehicle.id);
+      const legacyKey = vehicle.id === gt01.id ? PRESET_KEY : retiredId && `${PRESET_KEY}:${retiredId}`;
+      if (legacyKey) {
+        raw = source.getItem(legacyKey);
+        legacy = raw !== null;
+      }
     }
   } catch { return { config: fallback, status: 'unavailable' }; }
   if (raw === null) return { config: fallback, status: 'missing' };

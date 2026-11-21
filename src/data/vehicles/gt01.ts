@@ -73,6 +73,8 @@ const definition = {
   visual: {
     proceduralPreset: 'gt01',
     bodyColor: '#f0bb3c',
+    brandColor: '#f0bb3c',
+    brandStyle: 'GT nguyên bản với cánh gió cao và dáng xe thể thao.',
   },
 } as const satisfies VehicleDefinition;
 

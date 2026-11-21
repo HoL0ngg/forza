@@ -1,10 +1,47 @@
 import * as THREE from 'three';
 import { vehicleDefinitions, getVehicleDefinition } from '../data/vehicles/registry';
+import type { VehicleDefinition } from '../data/vehicles/types';
 import { createDefaultTuning, engineStats } from '../tuning/tuning';
 import { Car } from '../world/car';
 import type { PlayerProfile } from '../progression/profile';
 
-const credits = (value: number) => new Intl.NumberFormat('vi-VN').format(value);
+const number = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 });
+
+function compareStats(vehicle: VehicleDefinition) {
+  const engine = engineStats(createDefaultTuning(vehicle), vehicle);
+  return [
+    ['Công suất ước tính', `${number.format(Math.round(engine.peakHp))} hp`],
+    ['Mô-men cực đại', `${number.format(Math.round(engine.peakTorque))} Nm`],
+    ['Khối lượng', `${number.format(vehicle.mass)} kg`],
+    ['Dẫn động · Số tiến', `${vehicle.transmission.drivetrain} · ${vehicle.transmission.gearCount}`],
+    ['Tỉ số truyền cuối', number.format(vehicle.transmission.finalDrive)],
+    ['Độ bám trước / sau', `${number.format(vehicle.tires.gripFront)} / ${number.format(vehicle.tires.gripRear)}`],
+    ['Góc lái tối đa', `${number.format(vehicle.handling.maxSteeringAngle * 180 / Math.PI)}°`],
+  ];
+}
+
+function brandDot(vehicle: VehicleDefinition) {
+  const dot = document.createElement('span');
+  dot.className = 'garage-brand-dot';
+  dot.style.backgroundColor = vehicle.visual.brandColor ?? vehicle.visual.bodyColor;
+  dot.setAttribute('aria-hidden', 'true');
+  return dot;
+}
+
+function moveFocus(event: KeyboardEvent) {
+  const group = event.currentTarget as HTMLElement;
+  const buttons = [...group.querySelectorAll<HTMLButtonElement>('button:not([hidden])')];
+  const index = buttons.indexOf(event.target as HTMLButtonElement);
+  if (index < 0) return;
+  const offsets = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 };
+  const offset = offsets[event.key as keyof typeof offsets];
+  const next = event.key === 'Home' ? 0
+    : event.key === 'End' ? buttons.length - 1
+      : offset === undefined ? index : (index + offset + buttons.length) % buttons.length;
+  if (offset === undefined && event.key !== 'Home' && event.key !== 'End') return;
+  event.preventDefault();
+  buttons[next].focus();
+}
 
 export class Garage {
   readonly dialog: HTMLDialogElement;
@@ -15,93 +52,250 @@ export class Garage {
   private camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   private car?: Car;
   private angle = 0.65;
+  private previewAvailable = true;
+  private disposed = false;
+  private readonly onResize = () => { if (this.dialog.open) this.renderPreview(); };
+  private readonly brands: HTMLElement;
+  private readonly cars: HTMLElement;
+  private readonly action: HTMLButtonElement;
 
   constructor(private profile: () => PlayerProfile, private buy: (id: string) => void, private select: (id: string) => void) {
     this.dialog = document.createElement('dialog');
     this.dialog.className = 'garage-dialog';
     this.dialog.setAttribute('aria-labelledby', 'garage-title');
-    this.dialog.innerHTML = `<div class="garage-heading"><div><div class="eyebrow">COASTLINE / SHOWROOM</div><h2 id="garage-title">Garage & cửa hàng</h2></div><button id="garage-close" aria-label="Đóng garage">✕</button></div>
-      <div class="garage-wallet" id="garage-wallet"></div><nav class="garage-brands" aria-label="Hãng xe"></nav>
-      <div class="garage-layout"><div><canvas id="garage-preview" aria-label="Xem trước xe 3D"></canvas><div class="garage-rotate"><button id="garage-left" aria-label="Xoay xe trái">↶</button><span>XEM XE 3D</span><button id="garage-right" aria-label="Xoay xe phải">↷</button></div><div id="garage-details"></div><button class="start-button" id="garage-action"></button><p id="garage-message" role="status"></p></div><div id="garage-cars" aria-label="Danh sách xe"></div></div>`;
+    this.dialog.innerHTML = `
+      <header class="garage-heading">
+        <div><h2 id="garage-title">Garage & cửa hàng</h2><div class="garage-wallet" id="garage-wallet"></div></div>
+        <button type="button" id="garage-close" aria-label="Đóng garage" autofocus>✕</button>
+      </header>
+      <nav class="garage-brands" aria-label="Lọc theo hãng xe"></nav>
+      <div class="garage-layout">
+        <section class="garage-catalog" aria-labelledby="garage-catalog-title">
+          <h3 id="garage-catalog-title">Danh sách xe</h3>
+          <div id="garage-cars"></div>
+        </section>
+        <section aria-labelledby="garage-car-name">
+          <div class="garage-stage">
+            <canvas id="garage-preview" role="img" aria-label="Xem trước xe 3D"></canvas>
+            <p id="garage-preview-fallback" hidden>Thiết bị này không hiển thị được mẫu xe 3D.</p>
+            <div class="garage-rotate" role="group" aria-label="Xoay mẫu xe">
+              <button type="button" id="garage-left" aria-label="Xoay xe trái">↶</button>
+              <button type="button" id="garage-right" aria-label="Xoay xe phải">↷</button>
+            </div>
+          </div>
+          <div id="garage-details">
+            <div id="garage-car-brand" class="garage-brand"></div>
+            <h3 id="garage-car-name"></h3>
+            <p id="garage-brand-style"></p>
+          </div>
+          <button type="button" class="start-button" id="garage-action"></button>
+          <p id="garage-message" role="status"></p>
+        </section>
+      </div>
+      <table id="garage-comparison">
+        <caption>So sánh thông số nguyên bản</caption>
+        <thead><tr>
+          <th scope="col">Thông số</th>
+          <th scope="col"><span>Đang lái</span><strong id="garage-current-model"></strong></th>
+          <th scope="col"><span>Đang xem</span><strong id="garage-viewed-model"></strong></th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>`;
     document.body.append(this.dialog);
+    this.brands = this.dialog.querySelector('.garage-brands')!;
+    this.cars = this.dialog.querySelector('#garage-cars')!;
+    this.action = this.dialog.querySelector('#garage-action')!;
+    this.buildCatalog();
     this.dialog.querySelector('#garage-close')!.addEventListener('click', () => this.dialog.close());
-    this.dialog.querySelector('#garage-action')!.addEventListener('click', () => {
+    this.action.addEventListener('click', () => {
       try {
         const owned = this.profile().ownedVehicleIds.includes(this.selected);
         if (owned) this.select(this.selected); else this.buy(this.selected);
         this.refresh();
-        this.message(owned ? 'Đã chọn xe. Đóng garage để cầm lái.' : 'Đã mua xe! Chọn “Cầm lái” để sử dụng.');
+        if (this.action.disabled) this.vehicleButton(this.selected)?.focus();
+        this.message(owned ? 'Đã chọn xe. Đóng garage để cầm lái.' : 'Đã mua xe! Chọn “Cầm lái xe này” để sử dụng.');
       } catch (error) { this.message((error as Error).message); }
     });
     for (const [id, direction] of [['garage-left', -1], ['garage-right', 1]] as const) {
-      this.dialog.querySelector(`#${id}`)!.addEventListener('click', () => { this.angle += direction * 0.45; this.renderPreview(); });
+      this.dialog.querySelector(`#${id}`)!.addEventListener('click', () => {
+        this.angle += direction * 0.45;
+        this.renderPreview();
+      });
     }
-    this.dialog.querySelector('.garage-brands')!.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-brand]');
-      if (!button) return;
-      this.brand = button.dataset.brand!; this.refresh();
-    });
-    this.dialog.querySelector('#garage-cars')!.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-vehicle]');
-      if (!button) return;
-      this.selected = button.dataset.vehicle!; this.refresh(); this.preview(); this.message('');
-    });
-    window.addEventListener('resize', () => { if (this.dialog.open) this.renderPreview(); });
-    const light = new THREE.HemisphereLight(0xdcefff, 0x29413d, 3);
-    this.scene.add(light);
-    const sun = new THREE.DirectionalLight(0xffffff, 4); sun.position.set(4, 7, 5); this.scene.add(sun);
+    this.brands.addEventListener('keydown', moveFocus);
+    this.cars.addEventListener('keydown', moveFocus);
+    this.dialog.addEventListener('close', () => this.releaseCar());
+    window.addEventListener('resize', this.onResize);
+    this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x29413d, 3));
+    const sun = new THREE.DirectionalLight(0xffffff, 4);
+    sun.position.set(4, 7, 5);
+    this.scene.add(sun);
     const floor = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 0.12, 48), new THREE.MeshStandardMaterial({ color: 0x24454b, roughness: 0.8 }));
-    floor.position.y = -0.08; this.scene.add(floor);
+    floor.position.y = -0.08;
+    this.scene.add(floor);
   }
 
   open() {
     this.selected = this.profile().selectedVehicleId;
     this.brand = '';
-    this.refresh(); this.message(''); this.dialog.showModal(); this.preview();
+    this.refresh();
+    this.message('');
+    this.dialog.showModal();
+    this.preview();
   }
 
-  private message(value: string) { this.dialog.querySelector('#garage-message')!.textContent = value; }
+  private buildCatalog() {
+    const brands = new Map(vehicleDefinitions.map(vehicle => [vehicle.brand, vehicle]));
+    for (const brand of ['', ...brands.keys()]) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.dataset.brand = brand;
+      button.setAttribute('aria-controls', 'garage-cars');
+      const vehicle = brands.get(brand);
+      if (vehicle) button.append(brandDot(vehicle));
+      button.append(brand || 'Tất cả');
+      button.addEventListener('click', () => {
+        this.brand = brand;
+        const current = getVehicleDefinition(this.selected);
+        this.inspect(brand && current.brand !== brand ? brands.get(brand)!.id : current.id);
+      });
+      this.brands.append(button);
+    }
+    for (const vehicle of vehicleDefinitions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'garage-car';
+      button.dataset.vehicle = vehicle.id;
+      button.append(brandDot(vehicle));
+      const text = document.createElement('span');
+      const name = document.createElement('strong');
+      name.textContent = vehicle.name;
+      const make = document.createElement('small');
+      make.textContent = vehicle.brand;
+      text.append(name, make);
+      const state = document.createElement('span');
+      state.className = 'garage-car-state';
+      button.append(text, state);
+      button.addEventListener('click', () => this.inspect(vehicle.id));
+      this.cars.append(button);
+    }
+  }
+
+  private vehicleButton(id: string) {
+    return [...this.cars.querySelectorAll<HTMLButtonElement>('button')].find(button => button.dataset.vehicle === id);
+  }
+
+  private inspect(id: string) {
+    const changed = this.selected !== id;
+    this.selected = id;
+    this.refresh();
+    this.message('');
+    if (changed) this.preview();
+  }
+
+  private message(value: string) {
+    this.dialog.querySelector('#garage-message')!.textContent = value;
+  }
 
   private refresh() {
     const profile = this.profile();
     const definition = getVehicleDefinition(this.selected);
-    this.dialog.querySelector('#garage-wallet')!.textContent = `${credits(profile.credits)} CR · ${profile.ownedVehicleIds.length} / ${vehicleDefinitions.length} XE SỞ HỮU`;
-    this.dialog.querySelector('.garage-brands')!.innerHTML = ['', ...new Set(vehicleDefinitions.map(vehicle => vehicle.brand))].map(brand => `<button data-brand="${brand}" aria-pressed="${brand === this.brand}">${brand || 'Tất cả'}</button>`).join('');
-    this.dialog.querySelector('#garage-cars')!.innerHTML = vehicleDefinitions.filter(vehicle => !this.brand || vehicle.brand === this.brand).map(vehicle => `<button class="garage-car" data-vehicle="${vehicle.id}" aria-pressed="${vehicle.id === this.selected}"><span class="garage-swatch" style="background:${vehicle.visual.bodyColor}"></span><span><small>${vehicle.brand}</small><strong>${vehicle.name}</strong><small>${vehicle.transmission.drivetrain} · ${vehicle.engine.name}</small></span><span>${profile.selectedVehicleId === vehicle.id ? 'ĐANG LÁI' : profile.ownedVehicleIds.includes(vehicle.id) ? 'ĐÃ SỞ HỮU' : `${credits(vehicle.price)} CR`}</span></button>`).join('');
-    const stats = engineStats(createDefaultTuning(definition), definition);
-    this.dialog.querySelector('#garage-details')!.innerHTML = `<div class="eyebrow">${definition.brand}</div><h3>${definition.name}</h3><div class="garage-stats"><span><strong>${Math.round(stats.peakHp)}</strong> HP</span><span><strong>${definition.mass}</strong> kg</span><span><strong>${definition.transmission.drivetrain}</strong></span><span>${definition.engine.aspiration}</span></div>`;
-    const action = this.dialog.querySelector<HTMLButtonElement>('#garage-action')!;
+    const active = getVehicleDefinition(profile.selectedVehicleId);
     const owned = profile.ownedVehicleIds.includes(this.selected);
-    action.textContent = profile.selectedVehicleId === this.selected ? 'Đang cầm lái' : owned ? 'Cầm lái xe này' : `Mua xe · ${credits(definition.price)} CR`;
-    action.disabled = profile.selectedVehicleId === this.selected || (!owned && profile.credits < definition.price);
+    this.dialog.querySelector('#garage-wallet')!.textContent = `${number.format(profile.credits)} CR · ${profile.ownedVehicleIds.length}/${vehicleDefinitions.length} xe sở hữu`;
+    for (const button of this.brands.querySelectorAll('button')) {
+      button.setAttribute('aria-pressed', String(button.dataset.brand === this.brand));
+    }
+    for (const vehicle of vehicleDefinitions) {
+      const button = this.vehicleButton(vehicle.id)!;
+      button.hidden = Boolean(this.brand && vehicle.brand !== this.brand);
+      button.setAttribute('aria-pressed', String(vehicle.id === this.selected));
+      button.querySelector('.garage-car-state')!.textContent = vehicle.id === active.id ? 'Đang lái'
+        : profile.ownedVehicleIds.includes(vehicle.id) ? 'Đã sở hữu' : `${number.format(vehicle.price)} CR`;
+    }
+    this.dialog.querySelector('#garage-car-brand')!.replaceChildren(brandDot(definition), definition.brand);
+    this.dialog.querySelector('#garage-car-name')!.textContent = definition.name;
+    this.dialog.querySelector('#garage-brand-style')!.textContent = definition.visual.brandStyle ?? '';
+    this.dialog.querySelector('#garage-preview')!.setAttribute('aria-label', `Mẫu 3D của ${definition.brand} ${definition.name}`);
+    this.action.textContent = active.id === this.selected ? 'Đang cầm lái' : owned ? 'Cầm lái xe này' : `Mua xe · ${number.format(definition.price)} CR`;
+    this.action.disabled = active.id === this.selected || (!owned && profile.credits < definition.price);
+    this.updateComparison(active, definition);
+  }
+
+  private updateComparison(active: VehicleDefinition, viewed: VehicleDefinition) {
+    this.dialog.querySelector('#garage-current-model')!.textContent = active.name;
+    this.dialog.querySelector('#garage-viewed-model')!.textContent = viewed.name;
+    const viewedStats = compareStats(viewed);
+    const rows = compareStats(active).map(([label, value], index) => {
+      const row = document.createElement('tr');
+      const heading = document.createElement('th');
+      heading.scope = 'row';
+      heading.textContent = label;
+      row.append(heading);
+      row.insertCell().textContent = value;
+      row.insertCell().textContent = viewedStats[index][1];
+      return row;
+    });
+    this.dialog.querySelector('#garage-comparison tbody')!.replaceChildren(...rows);
   }
 
   private preview() {
+    if (!this.previewAvailable) return;
+    let next: Car | undefined;
     try {
-      this.renderer ??= new THREE.WebGLRenderer({ canvas: this.dialog.querySelector<HTMLCanvasElement>('#garage-preview')!, antialias: true, alpha: true });
-      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
-      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      if (this.car) { this.scene.remove(this.car.mesh); this.car.dispose(); }
-      this.car = new Car(getVehicleDefinition(this.selected));
-      this.scene.add(this.car.mesh);
+      if (!this.renderer) {
+        this.renderer = new THREE.WebGLRenderer({ canvas: this.dialog.querySelector<HTMLCanvasElement>('#garage-preview')!, antialias: true, alpha: true });
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+        this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      }
+      next = new Car(getVehicleDefinition(this.selected));
+      this.releaseCar();
+      this.car = next;
+      this.scene.add(next.mesh);
       this.renderPreview();
-    } catch { this.message('Không khởi tạo được preview 3D. Bạn vẫn có thể mua và chọn xe.'); }
+    } catch {
+      if (next && next !== this.car) next.dispose();
+      this.releaseCar();
+      this.renderer?.dispose();
+      this.renderer = undefined;
+      this.previewAvailable = false;
+      this.dialog.querySelector<HTMLElement>('#garage-preview-fallback')!.hidden = false;
+      this.dialog.querySelector<HTMLElement>('.garage-rotate')!.hidden = true;
+      this.dialog.querySelector('#garage-preview')!.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  private releaseCar() {
+    this.car?.dispose();
+    this.car = undefined;
   }
 
   private renderPreview() {
-    if (!this.renderer) return;
+    if (!this.renderer || !this.car) return;
     const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || 400, height = canvas.clientHeight || 240;
+    const width = canvas.clientWidth || 400;
+    const height = canvas.clientHeight || 240;
     this.renderer.setSize(width, height, false);
-    this.camera.aspect = width / height; this.camera.updateProjectionMatrix();
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
     this.camera.position.set(Math.sin(this.angle) * 9, 3.8, Math.cos(this.angle) * 9);
     this.camera.lookAt(0, 0.7, 0);
     this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {
-    this.car?.dispose(); this.renderer?.dispose();
-    this.scene.traverse(object => { if (object instanceof THREE.Mesh) { object.geometry.dispose(); for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose(); } });
+    if (this.disposed) return;
+    this.disposed = true;
+    window.removeEventListener('resize', this.onResize);
+    this.releaseCar();
+    this.renderer?.dispose();
+    this.scene.traverse(object => {
+      if (object instanceof THREE.Mesh) {
+        object.geometry.dispose();
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose();
+      }
+    });
+    this.scene.clear();
     this.dialog.remove();
   }
 }

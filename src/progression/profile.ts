@@ -1,3 +1,4 @@
+import { getVehicleReplacementId } from '../data/vehicles/legacy';
 import { DEFAULT_VEHICLE_ID, getVehicleDefinition, hasVehicleDefinition } from '../data/vehicles/registry';
 
 export interface PlayerProfile {
@@ -29,19 +30,35 @@ export function validateProfile(value: unknown): PlayerProfile {
   return { version: 1, credits: data.credits, ownedVehicleIds: [...data.ownedVehicleIds], selectedVehicleId: data.selectedVehicleId, bestTimeMs: data.bestTimeMs as number | null };
 }
 
+function migrateLegacyVehicles(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return value;
+  const data = value as Record<string, unknown>;
+  const owned = data.ownedVehicleIds;
+  const selected = data.selectedVehicleId;
+  if (data.version !== 1 || !Array.isArray(owned) || typeof selected !== 'string'
+    || !owned.includes(selected) || new Set(owned).size !== owned.length) return value;
+
+  const currentId = (id: unknown) => typeof id === 'string' ? getVehicleReplacementId(id) ?? id : id;
+  return {
+    ...data,
+    ownedVehicleIds: [...new Set(owned.map(currentId))],
+    selectedVehicleId: currentId(selected),
+  };
+}
+
 export function loadProfile(storage?: ProfileStorage): { profile: PlayerProfile; status: 'loaded' | 'missing' | 'invalid' | 'unavailable' } {
   let raw: string | null;
   try { raw = (storage ?? window.localStorage).getItem(PROFILE_KEY); }
   catch { return { profile: createProfile(), status: 'unavailable' }; }
   if (raw === null) return { profile: createProfile(), status: 'missing' };
-  try { return { profile: validateProfile(JSON.parse(raw)), status: 'loaded' }; }
+  try { return { profile: validateProfile(migrateLegacyVehicles(JSON.parse(raw))), status: 'loaded' }; }
   catch { return { profile: createProfile(), status: 'invalid' }; }
 }
 
 export function saveProfile(profile: PlayerProfile, storage?: ProfileStorage) {
   const validated = validateProfile(profile);
   try { (storage ?? window.localStorage).setItem(PROFILE_KEY, JSON.stringify(validated)); }
-  catch { throw new Error('Không thể lưu tiến trình trên trình duyệt này. Thay đổi chỉ được giữ trong phiên chơi hiện tại.'); }
+  catch { throw new Error('Không thể lưu tiến trình trên trình duyệt này.'); }
 }
 
 export function purchaseVehicle(profile: PlayerProfile, id: string): PlayerProfile {

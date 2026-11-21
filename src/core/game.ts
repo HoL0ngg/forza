@@ -10,7 +10,7 @@ import { loadPreset } from '../tuning/storage';
 import { TuningPanel } from '../ui/tuning-panel';
 import { EngineAudio } from '../audio/engine-audio';
 import { getVehicleDefinition } from '../data/vehicles/registry';
-import { createVehicleRuntime } from '../vehicles/vehicle-factory';
+import { createVehicleRuntime, swapVehicleRuntime } from '../vehicles/vehicle-factory';
 import { Garage } from '../ui/garage';
 import { loadProfile, saveProfile, purchaseVehicle, selectVehicle, rewardRace, RACE_REWARD } from '../progression/profile';
 import type { PlayerProfile } from '../progression/profile';
@@ -110,16 +110,16 @@ export class Game {
   private changeVehicle(id: string) {
     const next = selectVehicle(this.profile, id);
     const definition = getVehicleDefinition(id);
-    const setup = this.sessionTunings.get(id) ?? loadPreset(undefined, definition).config;
-    const runtime = createVehicleRuntime(spawn, id, setup);
+    const sessionSetup = this.sessionTunings.get(id);
+    const savedSetup = sessionSetup ? { config: sessionSetup, status: 'missing' as const } : loadPreset(undefined, definition);
+    const runtime = createVehicleRuntime(spawn, id, savedSetup.config);
     try { this.commitProfile(next); }
     catch (error) { runtime.dispose(); throw error; }
+    this.savedSetup = savedSetup;
     this.sessionTunings.set(this.vehicle.definition.id, this.vehicle.transmission.currentConfig);
     this.trial.cancel();
-    this.world.scene.remove(this.car.mesh);
-    this.vehicleRuntime.dispose();
+    swapVehicleRuntime(this.world.scene, this.vehicleRuntime, runtime);
     this.vehicleRuntime = runtime; this.vehicle = runtime.vehicle; this.car = runtime.car;
-    this.world.scene.add(this.car.mesh);
     this.audio.setActive(false);
     this.onRoad = true; this.input.clear(); this.accumulator = 0;
     this.car.update(this.vehicle, false); this.camera.update(this.vehicle, 0, !this.started, true);
@@ -157,7 +157,7 @@ export class Game {
       (event.currentTarget as HTMLElement).blur();
     });
     click('start', () => this.begin());
-    click('open-garage', () => this.openGarage());
+    document.querySelector('#open-garage')!.addEventListener('click', () => this.openGarage());
     click('start-trial', () => this.startTrial());
     click('cancel-trial', () => { this.trial.cancel(); this.raceMarkers.update(this.trial); this.updateProgress(); this.hud.toast('Đã hủy cuộc đua.'); });
     click('pause', () => this.pause());
@@ -204,7 +204,7 @@ export class Game {
         this.accumulator = 0;
         document.body.classList.toggle('paused', this.paused);
         if (!this.paused) {
-          (document.activeElement as HTMLElement)?.blur();
+          if (dialog !== this.garage.dialog) (document.activeElement as HTMLElement)?.blur();
           if (this.started) this.resumeAudio();
         }
       });

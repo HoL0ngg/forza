@@ -2,9 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { TuningPanel } from '../src/ui/tuning-panel';
-import { cloneConfig } from '../src/tuning/tuning';
+import { cloneConfig, createDefaultTuning, getTuningLimits } from '../src/tuning/tuning';
 import { loadPreset } from '../src/tuning/storage';
 import { Hud } from '../src/ui/hud';
+import { Garage } from '../src/ui/garage';
+import { getVehicleDefinition } from '../src/data/vehicles/registry';
+import { createProfile, purchaseVehicle, selectVehicle } from '../src/progression/profile';
 import { Input } from '../src/core/input';
 import { Vehicle } from '../src/physics/vehicle';
 
@@ -66,6 +69,23 @@ test('invalid/empty tuning input blocks apply and keeps last valid graph', () =>
   dom.window.close();
 });
 
+test('tuning fields use the active vehicle limits and the save button targets its own preset', () => {
+  const { dom, input, click } = setup();
+  const definition = getVehicleDefinition('sakura-sprint');
+  const stock = createDefaultTuning(definition);
+  const limits = getTuningLimits(definition);
+  const panel = new TuningPanel(() => {});
+  panel.open(stock, definition);
+  const redline = document.querySelector<HTMLInputElement>('#number-redlineRpm')!;
+  assert.equal(Number(redline.min), limits.redlineRpm.min);
+  assert.equal(Number(redline.max), limits.redlineRpm.max);
+  input('number-redlineRpm', String(limits.redlineRpm.max));
+  click('save-preset');
+  assert.equal(loadPreset(dom.window.localStorage, definition).config.redlineRpm, limits.redlineRpm.max);
+  assert.equal(loadPreset(dom.window.localStorage).status, 'missing');
+  dom.window.close();
+});
+
 test('HUD reports real gear, manual mode and redline; sound toggle is accessible', () => {
   const { dom } = setup();
   const hud = new Hud(); const car = new Vehicle({ x: 0, z: 0, heading: 0 });
@@ -97,4 +117,108 @@ test('input ignores typing in tuning fields and releases throttle on blur', () =
   field.dispatchEvent(new dom.window.KeyboardEvent('keydown', { code: 'KeyQ', bubbles: true }));
   assert.equal(actions.includes('KeyQ'), false);
   dom.window.close();
+});
+
+test('a restored HUD button keeps native activation and still accepts driving shortcuts', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  const actions: string[] = [];
+  const input = new Input(code => actions.push(code), () => {});
+  const keydown = (target: Element, code: string) => {
+    const event = new dom.window.KeyboardEvent('keydown', { code, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event.defaultPrevented;
+  };
+  const trigger = document.querySelector<HTMLButtonElement>('#help')!;
+  trigger.focus();
+  assert.equal(keydown(trigger, 'Space'), false);
+  assert.equal(keydown(trigger, 'Enter'), false);
+  assert.equal(input.read().handbrake, false);
+  assert.deepEqual(actions, []);
+
+  assert.equal(keydown(trigger, 'KeyW'), true);
+  assert.equal(input.read().throttle, 1);
+  keydown(trigger, 'Escape');
+  assert.deepEqual(actions, ['KeyW', 'Escape']);
+
+  input.clear();
+  hud.helpDialog.showModal();
+  const dialogButton = hud.helpDialog.querySelector('button')!;
+  assert.equal(keydown(dialogButton, 'KeyW'), false);
+  assert.equal(input.read().throttle, 0);
+  dom.window.close();
+});
+
+test('garage exposes keyboard-focusable browsing, accessible status and separate purchase/selection', () => {
+  const { dom } = setup();
+  const candidate = getVehicleDefinition('sakura-sprint');
+  let profile = { ...createProfile(), credits: candidate.price };
+  const purchases: string[] = [];
+  const selections: string[] = [];
+  // jsdom has no WebGL; the preview failure path must leave the accessible controls usable.
+  dom.window.HTMLCanvasElement.prototype.getContext = () => null;
+  const garage = new Garage(
+    () => profile,
+    id => { profile = purchaseVehicle(profile, id); purchases.push(id); },
+    id => { profile = selectVehicle(profile, id); selections.push(id); },
+  );
+  try {
+    garage.open();
+    assert.equal(garage.dialog.open, true);
+    const labelId = garage.dialog.getAttribute('aria-labelledby');
+    assert.match(garage.dialog.querySelector(`#${labelId}`)?.textContent ?? '', /garage/i);
+    assert.ok(garage.dialog.querySelector('#garage-preview')?.getAttribute('aria-label'));
+    assert.ok(garage.dialog.querySelector('#garage-close')?.getAttribute('aria-label'));
+    assert.equal(garage.dialog.querySelector('#garage-message')?.getAttribute('role'), 'status');
+
+    const candidateButton = garage.dialog.querySelector<HTMLButtonElement>(`button[data-vehicle="${candidate.id}"]`)!;
+    const action = garage.dialog.querySelector<HTMLButtonElement>('#garage-action')!;
+    assert.equal(candidateButton.tabIndex, 0);
+    assert.equal(candidateButton.getAttribute('aria-pressed'), 'false');
+    candidateButton.focus();
+    assert.equal(document.activeElement, candidateButton);
+    const navigate = (target: Element, key: string) => target.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    navigate(candidateButton, 'End');
+    const lastButton = garage.dialog.querySelector<HTMLButtonElement>('button[data-vehicle="ferro-v8"]')!;
+    assert.equal(document.activeElement, lastButton);
+    navigate(lastButton, 'Home');
+    const firstButton = garage.dialog.querySelector<HTMLButtonElement>('button[data-vehicle="gt01"]')!;
+    assert.equal(document.activeElement, firstButton);
+    navigate(firstButton, 'ArrowRight');
+    assert.equal(document.activeElement, candidateButton);
+    // jsdom does not implement native Enter activation; click is the resulting button action.
+    candidateButton.click();
+    assert.equal(garage.dialog.querySelector(`[data-vehicle="${candidate.id}"]`)?.getAttribute('aria-pressed'), 'true');
+    assert.equal((document.activeElement as HTMLElement)?.dataset.vehicle, candidate.id);
+    assert.equal(action.disabled, false);
+    assert.deepEqual(selections, []);
+    const comparison = garage.dialog.querySelector('table#garage-comparison')!;
+    assert.ok(comparison.querySelector('caption'));
+    assert.ok(comparison.querySelectorAll('th[scope="col"]').length >= 2);
+    assert.ok(comparison.querySelectorAll('th[scope="row"]').length >= 4);
+    assert.match(comparison.textContent ?? '', /GT–01/);
+    assert.match(comparison.textContent ?? '', new RegExp(candidate.name));
+
+    action.focus();
+    action.click();
+    assert.deepEqual(purchases, [candidate.id]);
+    assert.deepEqual(selections, []);
+    assert.equal(profile.selectedVehicleId, 'gt01');
+    action.click();
+    assert.deepEqual(selections, [candidate.id]);
+    assert.equal(profile.selectedVehicleId, candidate.id);
+    assert.equal(action.disabled, true);
+
+    const expensive = garage.dialog.querySelector<HTMLButtonElement>('button[data-vehicle="ferro-v8"]')!;
+    expensive.click();
+    assert.equal(action.disabled, true);
+    action.click();
+    assert.deepEqual(purchases, [candidate.id]);
+    assert.deepEqual(selections, [candidate.id]);
+    garage.dialog.querySelector<HTMLButtonElement>('#garage-close')!.click();
+    assert.equal(garage.dialog.open, false);
+  } finally {
+    garage.dispose();
+    dom.window.close();
+  }
 });

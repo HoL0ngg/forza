@@ -1,3 +1,4 @@
+import type { Scene } from 'three';
 import type { VehiclePose } from '../physics/vehicle';
 import { Vehicle } from '../physics/vehicle';
 import type { TuningConfig } from '../tuning/tuning';
@@ -30,4 +31,10 @@ export function createVehicleRuntime(
     car,
     dispose() { car.dispose(); },
   };
+}
+
+/** Replaces an already prepared runtime after the caller commits the selection. */
+export function swapVehicleRuntime(scene: Scene, previous: VehicleRuntime, next: VehicleRuntime) {
+  previous.dispose();
+  scene.add(next.car.mesh);
 }

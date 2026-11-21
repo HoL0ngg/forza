@@ -134,8 +134,10 @@ export function validateVehicleDefinition(value: unknown): VehicleDefinition {
   text(sound.engineSampleSet, 'vehicle.sound.engineSampleSet');
   text(sound.exhaustType, 'vehicle.sound.exhaustType');
   const visual = record(vehicle.visual, 'vehicle.visual');
-  oneOf(visual.proceduralPreset, ['gt01', 'hatchback', 'rally', 'muscle', 'supercar'] as const, 'vehicle.visual.proceduralPreset');
+  oneOf(visual.proceduralPreset, ['gt01', 'hatchback', 'coupe', 'muscle'] as const, 'vehicle.visual.proceduralPreset');
   assertRgbHex(visual.bodyColor, 'vehicle.visual.bodyColor');
+  if (visual.brandColor !== undefined) assertRgbHex(visual.brandColor, 'vehicle.visual.brandColor');
+  if (visual.brandStyle !== undefined) text(visual.brandStyle, 'vehicle.visual.brandStyle');
 
   return deepCloneAndFreeze(value) as VehicleDefinition;
 }

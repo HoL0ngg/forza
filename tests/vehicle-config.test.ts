@@ -20,12 +20,14 @@ const cloneGt01 = () => structuredClone(gt01) as DeepMutable<VehicleDefinition>;
 
 test('vehicle registry exposes GT-01 as its stable default', () => {
   assert.equal(DEFAULT_VEHICLE_ID, 'gt01');
-  assert.deepEqual(vehicleDefinitions.map(vehicle => vehicle.id), ['gt01', 'coast-rally', 'sakura-sprint', 'sakura-rs', 'ferro-v8', 'ferro-gt']);
+  assert.deepEqual(vehicleDefinitions.map(vehicle => vehicle.id), ['gt01', 'sakura-sprint', 'sakura-rs', 'ferro-v8']);
   assert.equal(getVehicleDefinition(), gt01);
   assert.equal(getVehicleDefinition('gt01'), gt01);
   assert.equal(hasVehicleDefinition('gt01'), true);
-  assert.equal(hasVehicleDefinition('missing'), false);
-  assert.throws(() => getVehicleDefinition('missing'), /Unknown vehicle definition: missing/);
+  for (const id of ['coast-rally', 'ferro-gt', 'missing']) {
+    assert.equal(hasVehicleDefinition(id), false);
+    assert.throws(() => getVehicleDefinition(id), /Unknown vehicle definition/);
+  }
 });
 
 test('validated vehicle definitions are deeply frozen and immutable', () => {

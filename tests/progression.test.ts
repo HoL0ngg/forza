@@ -66,3 +66,43 @@ test('profile storage round-trips and invalid saves are retained without throwin
   assert.equal(loadProfile(blocked).status, 'unavailable');
   assert.throws(() => saveProfile(profile, blocked), /Không thể lưu/);
 });
+
+test('v1 profiles migrate retired cars, collapsing only mapped collisions and retaining progress', () => {
+  const storage = memoryStorage();
+  const legacy = {
+    ...createProfile(),
+    credits: 1234,
+    ownedVehicleIds: [DEFAULT_VEHICLE_ID, 'coast-rally', 'sakura-sprint', 'ferro-gt'],
+    selectedVehicleId: 'ferro-gt',
+    bestTimeMs: 72_500,
+  };
+  const raw = JSON.stringify(legacy);
+  storage.setItem(PROFILE_KEY, raw);
+  assert.throws(() => validateProfile(legacy));
+
+  const loaded = loadProfile(storage);
+  assert.equal(loaded.status, 'loaded');
+  assert.deepEqual(loaded.profile, {
+    ...legacy,
+    ownedVehicleIds: [DEFAULT_VEHICLE_ID, 'sakura-sprint', 'sakura-rs'],
+    selectedVehicleId: 'sakura-rs',
+  });
+  assert.equal(storage.getItem(PROFILE_KEY), raw);
+  saveProfile(loaded.profile, storage);
+  assert.deepEqual(loadProfile(storage), loaded);
+});
+
+test('retired IDs do not make a broken profile eligible for migration', () => {
+  const storage = memoryStorage();
+  for (const overrides of [
+    { ownedVehicleIds: ['coast-rally', 'coast-rally'], selectedVehicleId: 'coast-rally' },
+    { ownedVehicleIds: [DEFAULT_VEHICLE_ID, 'coast-rally'], selectedVehicleId: 'sakura-sprint' },
+    { ownedVehicleIds: [DEFAULT_VEHICLE_ID, 'coast-rally', 'missing'], selectedVehicleId: DEFAULT_VEHICLE_ID },
+    { ownedVehicleIds: ['ferro-gt'], selectedVehicleId: 'ferro-gt', version: 99 },
+  ]) {
+    const raw = JSON.stringify({ ...createProfile(), ...overrides });
+    storage.setItem(PROFILE_KEY, raw);
+    assert.deepEqual(loadProfile(storage), { status: 'invalid', profile: createProfile() });
+    assert.equal(storage.getItem(PROFILE_KEY), raw);
+  }
+});

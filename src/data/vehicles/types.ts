@@ -1,6 +1,6 @@
 export type EngineAspiration = 'NA' | 'Turbo' | 'Supercharged' | 'Electric';
 export type Drivetrain = 'FWD' | 'RWD' | 'AWD';
-export type ProceduralVehiclePreset = 'gt01' | 'hatchback' | 'rally' | 'muscle' | 'supercar';
+export type ProceduralVehiclePreset = 'gt01' | 'hatchback' | 'coupe' | 'muscle';
 
 export interface Vector3Config {
   readonly x: number;
@@ -86,6 +86,8 @@ export interface VehicleSoundConfig {
 export interface VehicleVisualConfig {
   readonly proceduralPreset: ProceduralVehiclePreset;
   readonly bodyColor: string;
+  readonly brandColor?: string;
+  readonly brandStyle?: string;
 }
 
 export interface VehicleDefinition {
