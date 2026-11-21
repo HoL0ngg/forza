@@ -10,6 +10,7 @@ import { getVehicleDefinition } from '../src/data/vehicles/registry';
 import { createProfile, purchaseVehicle, selectVehicle } from '../src/progression/profile';
 import { Input } from '../src/core/input';
 import { Vehicle } from '../src/physics/vehicle';
+import { getWorldDefinition } from '../src/world/catalog';
 
 function setup() {
   const dom = new JSDOM('<!doctype html><body><div id="app"></div></body>', { url: 'http://127.0.0.1:5173/', pretendToBeVisual: true });
@@ -101,6 +102,45 @@ test('HUD reports real gear, manual mode and redline; sound toggle is accessible
   dom.window.close();
 });
 
+test('minimap tracks the selected world and projects checkpoints and the car together', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  const city = getWorldDefinition('city');
+  const coast = getWorldDefinition('coast');
+  const selector = document.querySelector<HTMLSelectElement>('#world-select')!;
+  assert.equal(selector.tagName, 'SELECT');
+  assert.ok(selector.labels?.item(0)?.textContent?.trim());
+  assert.equal(selector.value, city.id);
+  assert.deepEqual([...selector.options].map(option => option.value).sort(), ['city', 'coast']);
+
+  const map = document.querySelector('.minimap')!;
+  const cityPath = document.querySelector('#map-route')!.getAttribute('d');
+  assert.ok(cityPath?.startsWith('M'));
+  assert.ok(map.getAttribute('aria-label')?.includes(city.name));
+  assert.ok(document.querySelector('#map-water path')?.getAttribute('d')?.startsWith('M'));
+  assert.equal(document.querySelectorAll('#map-landmarks title').length, city.landmarks.length);
+
+  const checkpoint = city.checkpoints[0];
+  const circles = [...document.querySelectorAll<SVGCircleElement>('#map-checkpoints circle')];
+  assert.equal(circles.length, city.checkpoints.length);
+  const pin = circles.find(circle => circle.querySelector('title')?.textContent === checkpoint.name);
+  assert.ok(pin);
+  const vehicle = new Vehicle({ x: checkpoint.x, z: checkpoint.z, heading: 0 });
+  hud.update(vehicle, true);
+  const marker = document.querySelector('#map-marker')!;
+  const projected = marker.getAttribute('transform')!.match(/^translate\(([-\d.]+)[ ,]+([-\d.]+)\)/);
+  assert.ok(projected);
+  assert.ok(Math.abs(Number(projected[1]) - Number(pin.getAttribute('cx'))) < 0.05);
+  assert.ok(Math.abs(Number(projected[2]) - Number(pin.getAttribute('cy'))) < 0.05);
+
+  hud.setWorld(coast);
+  assert.equal(selector.value, coast.id);
+  assert.ok(map.getAttribute('aria-label')?.includes(coast.name));
+  assert.notEqual(document.querySelector('#map-route')!.getAttribute('d'), cityPath);
+  assert.equal(document.querySelectorAll('#map-landmarks title').length, coast.landmarks.length);
+  dom.window.close();
+});
+
 test('input ignores typing in tuning fields and releases throttle on blur', () => {
   const { dom } = setup(); new Hud();
   const actions: string[] = []; let blurred = 0;
@@ -146,6 +186,31 @@ test('a restored HUD button keeps native activation and still accepts driving sh
   const dialogButton = hud.helpDialog.querySelector('button')!;
   assert.equal(keydown(dialogButton, 'KeyW'), false);
   assert.equal(input.read().throttle, 0);
+  dom.window.close();
+});
+
+test('touch control events release held input on cancellation and pause clearing', () => {
+  const { dom } = setup();
+  new Hud();
+  const input = new Input(() => {}, () => {});
+  const throttle = document.querySelector<HTMLButtonElement>('[data-drive="KeyW"]')!;
+  const left = document.querySelector<HTMLButtonElement>('[data-drive="KeyA"]')!;
+  for (const button of [throttle, left]) button.setPointerCapture = () => {};
+  const pointer = (target: Element, type: string, id: number) => {
+    const event = new dom.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'pointerId', { value: id });
+    target.dispatchEvent(event);
+  };
+  pointer(throttle, 'pointerdown', 1);
+  pointer(left, 'pointerdown', 2);
+  assert.equal(input.read().throttle, 1);
+  assert.equal(input.read().steer, 1);
+  pointer(left, 'pointercancel', 2);
+  assert.equal(input.read().steer, 0);
+  assert.equal(input.read().throttle, 1);
+  input.clear();
+  assert.equal(input.read().throttle, 0);
+  assert.ok(!throttle.classList.contains('pressed'));
   dom.window.close();
 });
 

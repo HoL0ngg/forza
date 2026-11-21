@@ -1,5 +1,6 @@
 import type { Vehicle } from '../physics/vehicle';
-import { roadSamples, trackLength } from '../world/track';
+import { getWorldDefinition, worldDefinitions } from '../world/catalog';
+import type { WorldDefinition } from '../world/catalog';
 
 const icon = (content: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${content}</svg>`;
 const icons = {
@@ -15,6 +16,40 @@ const icons = {
   muted: icon('<path d="M4 9h4l5-4v14l-5-4H4zM17 9l5 6m0-6-5 6"/>'),
 };
 
+const mapWidth = 200;
+const mapHeight = 168;
+const mapPadding = 9;
+const svgNamespace = 'http://www.w3.org/2000/svg';
+
+type MapPoint = { x: number; z: number };
+
+function mapProjection(bounds: WorldDefinition['mapBounds']) {
+  const width = bounds.maxX - bounds.minX;
+  const height = bounds.maxZ - bounds.minZ;
+  const scale = Math.min((mapWidth - mapPadding * 2) / width, (mapHeight - mapPadding * 2) / height);
+  const centerX = (bounds.minX + bounds.maxX) / 2;
+  const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+  return (point: MapPoint) => [
+    +(mapWidth / 2 + (point.x - centerX) * scale).toFixed(2),
+    +(mapHeight / 2 + (point.z - centerZ) * scale).toFixed(2),
+  ] as const;
+}
+
+function pathFromPoints(points: readonly MapPoint[], project: ReturnType<typeof mapProjection>, closed = false) {
+  if (!points.length) return '';
+  const coordinates = points.map(point => project(point).join(' '));
+  return `M${coordinates.join(' L')}${closed ? ' Z' : ''}`;
+}
+
+function mapPin<T extends 'circle' | 'rect'>(type: T, name: string, attributes: Record<string, number | string>) {
+  const pin = document.createElementNS(svgNamespace, type);
+  for (const [attribute, value] of Object.entries(attributes)) pin.setAttribute(attribute, String(value));
+  const title = document.createElementNS(svgNamespace, 'title');
+  title.textContent = name;
+  pin.append(title);
+  return pin;
+}
+
 export class Hud {
   private speed: HTMLElement;
   private distance: HTMLElement;
@@ -28,32 +63,44 @@ export class Hud {
   private drivetrainLabel: HTMLElement;
   private needle: SVGElement;
   private marker: SVGElement;
+  private project = mapProjection(getWorldDefinition().mapBounds);
   private toastTimeout = 0;
   readonly pauseDialog: HTMLDialogElement;
   readonly helpDialog: HTMLDialogElement;
 
   constructor() {
-    const mapPath = roadSamples.filter((_, i) => i % 4 === 0).map((p, i) => `${i ? 'L' : 'M'}${((p.x + 370) * 0.2).toFixed(1)},${((p.z + 530) * 0.16).toFixed(1)}`).join(' ') + 'Z';
     document.querySelector('#app')!.innerHTML = `
-      <canvas id="game" aria-label="Thế giới lái xe 3D ven biển"></canvas>
+      <canvas id="game" aria-label="Thế giới lái xe 3D"></canvas>
       <div class="vignette" aria-hidden="true"></div>
       <header class="topbar">
         <a class="brand" href="./" aria-label="Coastline Drive — Trang bắt đầu"><span class="brand-icon">${icons.road}</span><span>COASTLINE<span class="brand-sub">DRIVE / EXPLORER SERIES</span></span></a>
-        <div class="mode-label"><span class="live-dot"></span>LÁI XE TỰ DO<span class="mode-divider"></span>VEN BIỂN</div>
+        <div class="mode-label"><span class="live-dot"></span>LÁI XE TỰ DO<span class="mode-divider"></span><span id="mode-world"></span></div>
         <nav class="top-actions" aria-label="Điều khiển game"><button class="icon-button utility-button" id="tuning" aria-label="Mở tuning hộp số và động cơ (G)" title="Tuning (G)">${icons.tuning}</button><button class="icon-button utility-button" id="sound" aria-label="Âm thanh động cơ" aria-pressed="true" title="Âm thanh (M)">${icons.sound}</button><button class="icon-button" id="help" aria-label="Hướng dẫn điều khiển" title="Hướng dẫn (H)">${icons.help}</button><button class="icon-button" id="fullscreen" aria-label="Toàn màn hình" title="Toàn màn hình">${icons.expand}</button><button class="icon-button" id="pause" aria-label="Tạm dừng" title="Tạm dừng (Esc)">${icons.pause}</button></nav>
       </header>
+      <div class="world-picker" id="world-picker"><label for="world-select">Bản đồ</label><select id="world-select"></select></div>
       <main class="intro" id="intro">
-        <div class="eyebrow"><span class="tiny-line"></span> CUNG ĐƯỜNG 01</div>
-        <h1>THE COAST<br>IS YOURS<span>.</span></h1>
-        <p>Khám phá bờ biển. Xây bộ sưu tập xe.<br>Đua tính giờ, kiếm credits và tìm chiếc xe của bạn.</p>
+        <h1 id="intro-world"></h1>
+        <p id="intro-world-description"></p>
         <button class="start-button" id="start">Bắt đầu lái ${icons.play}</button>
-        <div class="intro-meta"><span>${(trackLength / 1000).toFixed(1)} KM ĐƯỜNG VÒNG</span><span>KHÁM PHÁ TỰ DO</span></div>
+        <div class="intro-meta"><span id="intro-world-length"></span></div>
       </main>
-      <div class="location-tag"><span>COASTLINE DRIVE</span><strong>Cung đường ven biển</strong><div>TRỜI QUANG <span>/</span> 14:30</div></div>
+      <div class="location-tag" id="world-weather"></div>
       <div class="driving-hud" id="driving-hud">
         <section class="map-panel" aria-label="Bản đồ đường chạy">
-          <div class="map-heading"><span>${icons.road} COASTLINE</span><span class="north">N ↑</span></div>
-          <svg class="minimap" viewBox="0 0 200 168" role="img" aria-label="Vị trí xe trên đường vòng"><path d="M0 0H23L17 45 24 80 16 122 24 168H0Z" fill="#39828b" opacity=".45"/><path d="M30 0 23 45 30 80 22 122 30 168" fill="none" stroke="#879b76" opacity=".35" stroke-width="7"/><path d="${mapPath}" fill="none" stroke="#64807d" stroke-width="9" stroke-linejoin="round"/><path d="${mapPath}" fill="none" stroke="#d1e2d7" stroke-width="3" stroke-linejoin="round"/><g id="map-marker"><circle r="8" fill="#d9fc63" opacity=".2"/><path d="M0 -6 4.5 5 0 3 -4.5 5Z" fill="#d9fc63" stroke="#16383c" stroke-width="1"/></g></svg>
+          <div class="map-heading"><span>${icons.road} <span id="map-name"></span></span><span class="north" aria-label="Hướng bắc">B ↑</span></div>
+          <svg class="minimap" viewBox="0 0 ${mapWidth} ${mapHeight}" id="minimap" role="img" aria-labelledby="map-title" aria-describedby="map-description">
+            <title id="map-title"></title><desc id="map-description"></desc>
+            <g id="map-water" class="map-water"></g>
+            <path id="map-side-roads" class="map-side-roads"/>
+            <path id="map-route-shadow" class="map-route-shadow"/>
+            <path id="map-route" class="map-route"/>
+            <g id="map-landmarks" class="map-landmarks"></g>
+            <g id="map-checkpoints" class="map-checkpoints"></g>
+            <g id="map-marker"><circle r="8" fill="#d9fc63" opacity=".24"/><path d="M0 -6 4.5 5 0 3 -4.5 5Z" fill="#d9fc63" stroke="#16383c" stroke-width="1"/></g>
+          </svg>
+          <div class="map-legend" id="map-legend" aria-hidden="true">
+            <span id="map-key-checkpoints"><i class="map-key-checkpoint"></i> Điểm qua</span><span id="map-key-landmarks"><i class="map-key-landmark"></i> Địa danh</span>
+          </div>
           <div class="map-footer"><span>QUÃNG ĐƯỜNG</span><strong id="distance">0.00 <small>km</small></strong></div>
         </section>
         <div class="bottom-center"><div class="drive-message"><span class="live-dot"></span><span id="surface">ĐƯỜNG NHỰA</span><span class="message-divider">/</span> TỰ DO KHÁM PHÁ</div><div class="keyboard-hint"><span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Lái xe</span><span><kbd>SPACE</kbd> Phanh tay</span><button id="camera" title="Đổi khoảng cách camera (C)"><kbd>C</kbd> Camera</button><button id="reset" title="Đưa xe lại lên đường (R)"><kbd>R</kbd> Đặt lại</button></div></div>
@@ -78,7 +125,7 @@ export class Hud {
           <div><dt><kbd>T</kbd></dt><dd>Đổi Auto / Manual</dd></div>
           <div><dt><kbd>E</kbd> / <kbd>Q</kbd></dt><dd>Lên / xuống số (Manual)</dd></div>
           <div><dt><kbd>G</kbd> / <kbd>M</kbd></dt><dd>Tuning / Bật tắt âm thanh</dd></div>
-          <div><dt><kbd>B</kbd> / <kbd>F</kbd></dt><dd>Garage & shop / Đua tính giờ</dd></div>
+          <div><dt><kbd>B</kbd> / <kbd>F</kbd></dt><dd>Garage & cửa hàng / Đua tính giờ (ven biển)</dd></div>
           <div><dt><kbd>C</kbd> / <kbd>R</kbd></dt><dd>Camera / Đặt lại xe</dd></div>
           <div><dt><kbd>ESC</kbd> / <kbd>H</kbd></dt><dd>Tạm dừng / Hướng dẫn</dd></div>
         </dl><p class="help-note">Manual: khi xe dừng, Q từ số 1 → N → R; W để lùi. E để chọn lại N rồi số 1. Số N cho phép lên ga tại chỗ. Ra khỏi đường nhựa sẽ giảm tốc độ.</p><button class="start-button">Đã hiểu ${icons.play}</button></form></dialog>
@@ -97,6 +144,65 @@ export class Hud {
     this.marker = document.querySelector('#map-marker')!;
     this.pauseDialog = document.querySelector('#pause-dialog')!;
     this.helpDialog = document.querySelector('#help-dialog')!;
+    const picker = document.querySelector<HTMLSelectElement>('#world-select')!;
+    for (const world of worldDefinitions) {
+      const option = document.createElement('option');
+      option.value = world.id;
+      option.textContent = world.name;
+      picker.append(option);
+    }
+    this.setWorld(getWorldDefinition());
+  }
+
+  setWorld(world: WorldDefinition) {
+    this.project = mapProjection(world.mapBounds);
+    document.querySelector<HTMLElement>('#intro')!.dataset.world = world.id;
+    document.querySelector<HTMLSelectElement>('#world-select')!.value = world.id;
+    for (const id of ['mode-world', 'intro-world', 'map-name']) document.querySelector(`#${id}`)!.textContent = world.name;
+    document.querySelector('#game')!.setAttribute('aria-label', `Thế giới lái xe 3D — ${world.name}`);
+    document.querySelector('#map-title')!.textContent = `Bản đồ đường chạy — ${world.name}`;
+    document.querySelector('#minimap')!.setAttribute('aria-label', `Bản đồ đường chạy — ${world.name}`);
+    document.querySelector('#intro-world-length')!.textContent = `${(world.trackLength / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km đường vòng`;
+    const isCoast = world.id === 'coast';
+    document.querySelector('#intro-world-description')!.textContent = isCoast
+      ? 'Đua tính giờ ven biển để kiếm credits và mở rộng bộ sưu tập xe.'
+      : 'Lái qua đại lộ, cầu và hai bờ sông. Khám phá các địa danh trên đường vòng.';
+    document.querySelector('#world-weather')!.textContent = isCoast ? 'Trời quang' : 'Hoàng hôn';
+
+    const route = pathFromPoints(world.roadSamples.filter((_, index) => index % 3 === 0), this.project, true);
+    document.querySelector('#map-route')!.setAttribute('d', route);
+    document.querySelector('#map-route-shadow')!.setAttribute('d', route);
+    document.querySelector('#map-water')!.replaceChildren(...world.waterPaths.map(outline => {
+      const path = document.createElementNS(svgNamespace, 'path');
+      path.setAttribute('d', pathFromPoints(outline, this.project, true));
+      return path;
+    }));
+    document.querySelector('#map-side-roads')!.setAttribute('d', (world.sideRoads ?? []).map(path => pathFromPoints(path, this.project)).join(' '));
+
+    const checkpoints = world.checkpoints.map(checkpoint => {
+      const [x, y] = this.project(checkpoint);
+      return mapPin('circle', checkpoint.name, { cx: x, cy: y, r: 3.4 });
+    });
+    const landmarks = world.landmarks.map(landmark => {
+      const [x, y] = this.project(landmark);
+      return mapPin('rect', landmark.name, { x: x - 2.4, y: y - 2.4, width: 4.8, height: 4.8, transform: `rotate(45 ${x} ${y})` });
+    });
+    document.querySelector('#map-checkpoints')!.replaceChildren(...checkpoints);
+    document.querySelector('#map-landmarks')!.replaceChildren(...landmarks);
+    document.querySelector<HTMLElement>('#map-legend')!.hidden = checkpoints.length === 0 && landmarks.length === 0;
+    document.querySelector<HTMLElement>('#map-key-checkpoints')!.hidden = checkpoints.length === 0;
+    document.querySelector<HTMLElement>('#map-key-landmarks')!.hidden = landmarks.length === 0;
+    const points = [
+      world.checkpoints.length ? `Điểm qua: ${world.checkpoints.map(point => point.name).join(', ')}.` : '',
+      world.landmarks.length ? `Địa danh: ${world.landmarks.map(point => point.name).join(', ')}.` : '',
+    ];
+    document.querySelector('#map-description')!.textContent = ['Đường vòng, mặt nước và vị trí xe.', ...points].filter(Boolean).join(' ');
+    this.positionMarker(world.spawn);
+  }
+
+  private positionMarker(pose: MapPoint & { heading: number }) {
+    const [x, y] = this.project(pose);
+    this.marker.setAttribute('transform', `translate(${x} ${y}) rotate(${180 - pose.heading * 180 / Math.PI})`);
   }
 
   update(vehicle: Vehicle, onRoad: boolean) {
@@ -115,7 +221,7 @@ export class Hud {
     document.body.classList.toggle('manual-mode', transmission.mode === 'manual');
     this.distance.innerHTML = `${(vehicle.distance / 1000).toFixed(2)} <small>km</small>`;
     this.surface.textContent = onRoad ? 'ĐƯỜNG NHỰA' : 'NGOÀI ĐƯỜNG';
-    this.marker.setAttribute('transform', `translate(${(vehicle.x + 370) * 0.2} ${(vehicle.z + 530) * 0.16}) rotate(${180 - vehicle.heading * 180 / Math.PI})`);
+    this.positionMarker(vehicle);
   }
 
   animateRpm(vehicle: Vehicle, dt: number) {

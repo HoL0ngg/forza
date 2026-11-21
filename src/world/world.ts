@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import { roadSamples, nearestRoad, track } from './track';
+import { getWorldDefinition } from './catalog';
+import type { WorldDefinition } from './catalog';
+import { CityScenery } from './city-scenery';
 
 function randomGenerator(seed: number) {
   return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -27,12 +30,17 @@ function roadStrip(inner: number, outer: number, color: string, height: number) 
 
 export class World {
   readonly scene = new THREE.Scene();
-  readonly sunlight = new THREE.DirectionalLight('#fff5db', 2.6);
+  readonly sunlight: THREE.DirectionalLight;
+  private readonly city?: CityScenery;
+  private disposed = false;
 
-  constructor() {
-    this.scene.background = new THREE.Color('#b9dce6');
-    this.scene.fog = new THREE.Fog('#b9dce6', 320, 1800);
-    this.scene.add(new THREE.HemisphereLight('#d8f3ff', '#869d65', 2.3));
+  constructor(definition: WorldDefinition = getWorldDefinition()) {
+    const isCity = definition.id === 'city';
+    const horizon = isCity ? '#dca58e' : '#b9dce6';
+    this.scene.background = new THREE.Color(horizon);
+    this.scene.fog = new THREE.Fog(horizon, isCity ? 280 : 320, isCity ? 1040 : 1800);
+    this.scene.add(new THREE.HemisphereLight(isCity ? '#ffdfc6' : '#d8f3ff', '#869d65', isCity ? 2 : 2.3));
+    this.sunlight = new THREE.DirectionalLight(isCity ? '#ffd2a1' : '#fff5db', 2.6);
     this.sunlight.castShadow = true;
     this.sunlight.shadow.mapSize.set(2048, 2048);
     this.sunlight.shadow.camera.left = -60;
@@ -43,6 +51,11 @@ export class World {
     this.sunlight.shadow.camera.far = 220;
     this.sunlight.shadow.normalBias = 0.04;
     this.scene.add(this.sunlight, this.sunlight.target);
+    if (isCity) {
+      this.city = new CityScenery(this.scene);
+      this.update(definition.spawn.x, definition.spawn.z);
+      return;
+    }
 
     const ocean = new THREE.Mesh(new THREE.PlaneGeometry(8000, 8000), new THREE.MeshStandardMaterial({ color: '#389caf', roughness: 0.43, metalness: 0.18 }));
     ocean.rotation.x = -Math.PI / 2;
@@ -175,28 +188,8 @@ export class World {
     }
     this.scene.add(posts, bands);
     // Roadside chevrons show the curve without needing external textures.
-    const signCanvas = document.createElement('canvas');
-    signCanvas.width = 128; signCanvas.height = 128;
-    const ctx = signCanvas.getContext('2d')!;
-    ctx.fillStyle = '#ecda77'; ctx.fillRect(0, 0, 128, 128);
-    ctx.fillStyle = '#24353a'; ctx.beginPath();
-    ctx.moveTo(32, 18); ctx.lineTo(65, 18); ctx.lineTo(105, 64); ctx.lineTo(65, 110); ctx.lineTo(32, 110); ctx.lineTo(72, 64); ctx.fill();
-    const texture = new THREE.CanvasTexture(signCanvas);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    const signMat = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
-    for (const t of [0.08, 0.1, 0.12, 0.38, 0.4, 0.42, 0.72, 0.74, 0.76]) {
-      const point = track.getPointAt(t);
-      const tangent = track.getTangentAt(t);
-      const group = new THREE.Group();
-      group.position.set(point.x - tangent.z * 11, 0, point.z + tangent.x * 11);
-      group.rotation.y = Math.atan2(-tangent.x, -tangent.z);
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.5, 5), reflectorMat);
-      pole.position.y = 1.25;
-      const board = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 1.5), signMat);
-      board.position.y = 2.4;
-      group.add(pole, board);
-      this.scene.add(group);
-    }
+    this.addChevronSigns(reflectorMat);
+
     const cloudMat = new THREE.MeshBasicMaterial({ color: '#f1f6f3', transparent: true, opacity: 0.7 });
     const cloudGeo = new THREE.IcosahedronGeometry(1, 2);
     for (let i = 0; i < 22; i++) {
@@ -207,8 +200,64 @@ export class World {
     }
   }
 
+  private addChevronSigns(poleMaterial: THREE.Material) {
+    if (typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#ecda77';
+    ctx.fillRect(0, 0, 128, 128);
+    ctx.fillStyle = '#24353a';
+    ctx.beginPath();
+    ctx.moveTo(32, 18); ctx.lineTo(65, 18); ctx.lineTo(105, 64);
+    ctx.lineTo(65, 110); ctx.lineTo(32, 110); ctx.lineTo(72, 64); ctx.fill();
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const signMat = new THREE.MeshStandardMaterial({ map: texture, side: THREE.DoubleSide });
+    const poleGeometry = new THREE.CylinderGeometry(0.06, 0.06, 2.5, 5);
+    const boardGeometry = new THREE.PlaneGeometry(1.5, 1.5);
+    for (const t of [0.08, 0.1, 0.12, 0.38, 0.4, 0.42, 0.72, 0.74, 0.76]) {
+      const point = track.getPointAt(t);
+      const tangent = track.getTangentAt(t);
+      const group = new THREE.Group();
+      group.position.set(point.x - tangent.z * 11, 0, point.z + tangent.x * 11);
+      group.rotation.y = Math.atan2(-tangent.x, -tangent.z);
+      const pole = new THREE.Mesh(poleGeometry, poleMaterial);
+      pole.position.y = 1.25;
+      const board = new THREE.Mesh(boardGeometry, signMat);
+      board.position.y = 2.4;
+      group.add(pole, board);
+      this.scene.add(group);
+    }
+  }
+
   update(x: number, z: number) {
-    this.sunlight.position.set(x - 45, 85, z + 35);
+    this.sunlight.position.set(x - (this.city ? 84 : 45), this.city ? 57 : 85, z + 35);
     this.sunlight.target.position.set(x, 0, z);
+    this.city?.update(x, z);
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const textures = new Set<THREE.Texture>();
+    this.scene.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (object instanceof THREE.InstancedMesh) object.dispose();
+      geometries.add(object.geometry);
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material);
+    });
+    for (const material of materials) {
+      for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+      material.dispose();
+    }
+    geometries.forEach(geometry => geometry.dispose());
+    textures.forEach(texture => texture.dispose());
+    this.sunlight.shadow.dispose();
+    this.scene.clear();
   }
 }

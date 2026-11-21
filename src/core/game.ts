@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { neutralInput } from '../physics/vehicle';
 import { World } from '../world/world';
-import { nearestRoad, roadPose, ROAD_WIDTH, spawn } from '../world/track';
+import { DEFAULT_WORLD_ID, getWorldDefinition } from '../world/catalog';
 import { Hud } from '../ui/hud';
 import { ChaseCamera } from './camera';
 import { Input } from './input';
@@ -19,11 +19,13 @@ import { RaceMarkers } from '../racing/race-markers';
 
 export class Game {
   private renderer: THREE.WebGLRenderer;
-  private world = new World();
+  private map = getWorldDefinition(new URLSearchParams(location.search).get('map') === 'coast' ? 'coast' : DEFAULT_WORLD_ID);
+  private world = new World(this.map);
+  private disposed = false;
   private savedProfile = loadProfile();
   private profile = this.savedProfile.profile;
   private savedSetup = loadPreset(undefined, getVehicleDefinition(this.profile.selectedVehicleId));
-  private vehicleRuntime = createVehicleRuntime(spawn, this.profile.selectedVehicleId, this.savedSetup.config);
+  private vehicleRuntime = createVehicleRuntime(this.map.spawn, this.profile.selectedVehicleId, this.savedSetup.config);
   private vehicle = this.vehicleRuntime.vehicle;
   private car = this.vehicleRuntime.car;
   private camera = new ChaseCamera();
@@ -72,8 +74,14 @@ export class Game {
     const controls = document.createElement('div');
     controls.className = 'progress-actions';
     controls.innerHTML = '<button id="open-garage">Garage & shop <kbd>B</kbd></button><button id="start-trial">Đua tính giờ <kbd>F</kbd></button><button id="cancel-trial" hidden>Hủy đua</button>';
+    controls.append(document.querySelector('#world-picker')!);
+    const status = document.createElement('div');
+    status.className = 'progress-status';
+    status.id = 'progress-status';
+    status.setAttribute('role', 'status');
+    controls.append(status);
     document.body.append(controls);
-    const status = document.createElement('div'); status.className = 'progress-status'; status.id = 'progress-status'; status.setAttribute('role', 'status'); document.body.append(status);
+    this.hud.setWorld(this.map);
     this.updateProgress();
     this.bindUI();
     registerGameTools({
@@ -97,8 +105,51 @@ export class Game {
       this.audio.setActive(false);
       this.hud.error('Kết nối đồ họa bị gián đoạn. Nhấn Thử lại để khởi động lại game.');
     });
-    window.addEventListener('pagehide', () => { this.audio.setActive(false); this.audio.dispose(); this.vehicleRuntime.dispose(); this.garage.dispose(); this.raceMarkers.dispose(); });
-    if (import.meta.hot) import.meta.hot.dispose(() => { this.audio.dispose(); this.vehicleRuntime.dispose(); this.garage.dispose(); this.raceMarkers.dispose(); });
+    window.addEventListener('pagehide', event => {
+      if (event.persisted) {
+        this.input.clear();
+        this.audio.setActive(false);
+        this.pause();
+      } else this.dispose();
+    });
+    if (import.meta.hot) import.meta.hot.dispose(() => this.dispose());
+  }
+
+  private dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.renderer.setAnimationLoop(null);
+    this.audio.setActive(false);
+    this.audio.dispose();
+    this.vehicleRuntime.dispose();
+    this.garage.dispose();
+    this.raceMarkers.dispose();
+    this.world.dispose();
+    this.renderer.dispose();
+  }
+
+  private changeWorld(selector: HTMLSelectElement) {
+    const map = getWorldDefinition(selector.value);
+    if (map.id === this.map.id || this.paused) {
+      selector.value = this.map.id;
+      return;
+    }
+    const world = new World(map);
+    const oldWorld = this.world;
+    world.scene.add(this.car.mesh, this.raceMarkers.mesh);
+    this.world = world;
+    this.map = map;
+    oldWorld.dispose();
+    this.hud.setWorld(map);
+    this.reset(true);
+    this.world.update(this.vehicle.x, this.vehicle.z);
+
+    const url = new URL(window.location.href);
+    if (map.id === DEFAULT_WORLD_ID) url.searchParams.delete('map');
+    else url.searchParams.set('map', map.id);
+    window.history.replaceState(window.history.state, '', url);
+    selector.blur();
+    this.hud.toast(`Đã chuyển tới ${map.name}.`);
   }
 
   private commitProfile(next: PlayerProfile) {
@@ -112,7 +163,7 @@ export class Game {
     const definition = getVehicleDefinition(id);
     const sessionSetup = this.sessionTunings.get(id);
     const savedSetup = sessionSetup ? { config: sessionSetup, status: 'missing' as const } : loadPreset(undefined, definition);
-    const runtime = createVehicleRuntime(spawn, id, savedSetup.config);
+    const runtime = createVehicleRuntime(this.map.spawn, id, savedSetup.config);
     try { this.commitProfile(next); }
     catch (error) { runtime.dispose(); throw error; }
     this.savedSetup = savedSetup;
@@ -135,7 +186,7 @@ export class Game {
   }
 
   private startTrial() {
-    if (this.paused) return;
+    if (this.paused || this.map.id !== 'coast') return;
     if (!this.started) this.begin();
     this.reset(true); this.trial.start(); this.raceMarkers.update(this.trial); this.updateProgress();
     this.hud.toast('Theo cổng sáng trên đường. Qua đủ checkpoint để nhận 10.000 CR.');
@@ -144,10 +195,14 @@ export class Game {
   private updateProgress() {
     const status = document.querySelector('#progress-status');
     if (!status) return;
+    const coast = this.map.id === 'coast';
     const best = this.profile.bestTimeMs === null ? 'Chưa có kỷ lục' : `Kỷ lục ${(this.profile.bestTimeMs / 1000).toFixed(2)}s`;
-    status.textContent = this.trial.active
-      ? `${(this.trial.elapsedMs / 1000).toFixed(1)}s · Checkpoint ${Math.min(this.trial.checkpointIndex + 1, this.trial.checkpointCount)}/${this.trial.checkpointCount} · ${this.profile.credits.toLocaleString('vi-VN')} CR`
-      : `${this.vehicle.definition.brand} ${this.vehicle.definition.name} · ${this.profile.credits.toLocaleString('vi-VN')} CR · ${best}`;
+    const credits = this.profile.credits.toLocaleString('vi-VN');
+    const message = this.trial.active
+      ? `${(this.trial.elapsedMs / 1000).toFixed(1)}s · Checkpoint ${Math.min(this.trial.checkpointIndex + 1, this.trial.checkpointCount)}/${this.trial.checkpointCount} · ${credits} CR`
+      : `${this.vehicle.definition.brand} ${this.vehicle.definition.name} · ${credits} CR${coast ? ` · ${best}` : ''}`;
+    if (status.textContent !== message) status.textContent = message;
+    document.querySelector<HTMLButtonElement>('#start-trial')!.hidden = !coast;
     document.querySelector<HTMLButtonElement>('#cancel-trial')!.hidden = !this.trial.active;
   }
 
@@ -157,6 +212,8 @@ export class Game {
       (event.currentTarget as HTMLElement).blur();
     });
     click('start', () => this.begin());
+    const worldSelector = document.querySelector<HTMLSelectElement>('#world-select')!;
+    worldSelector.addEventListener('change', () => this.changeWorld(worldSelector));
     document.querySelector('#open-garage')!.addEventListener('click', () => this.openGarage());
     click('start-trial', () => this.startTrial());
     click('cancel-trial', () => { this.trial.cancel(); this.raceMarkers.update(this.trial); this.updateProgress(); this.hud.toast('Đã hủy cuộc đua.'); });
@@ -302,7 +359,7 @@ export class Game {
 
   private reset(toStart = false) {
     this.trial.cancel(); this.raceMarkers.update(this.trial); this.updateProgress();
-    this.vehicle.reset(toStart ? spawn : roadPose(nearestRoad(this.vehicle.x, this.vehicle.z).index));
+    this.vehicle.reset(toStart ? this.map.spawn : this.map.roadPose(this.map.nearestRoad(this.vehicle.x, this.vehicle.z).index));
     this.onRoad = true;
     this.input.clear();
     this.accumulator = 0;
@@ -322,7 +379,7 @@ export class Game {
       if (this.started && !this.paused) {
         this.accumulator += dt;
         while (this.accumulator >= fixedStep) {
-          this.onRoad = nearestRoad(this.vehicle.x, this.vehicle.z).distance < ROAD_WIDTH / 2;
+          this.onRoad = this.map.nearestRoad(this.vehicle.x, this.vehicle.z).distance < this.map.roadWidth / 2;
           this.vehicle.update(controls, fixedStep, this.onRoad);
           const result = this.trial.update(this.vehicle, fixedStep);
           if (result) {
@@ -333,8 +390,8 @@ export class Game {
           }
           this.accumulator -= fixedStep;
         }
-        // Scenery has no collisions in stage 1. Keep the playable area on the flat land.
-        if (this.vehicle.x < -310 || this.vehicle.x > 650 || Math.abs(this.vehicle.z) > 650) this.reset();
+        // Recover from the map edge and open water. Street scenery has no collision meshes.
+        if (this.map.isOutOfBounds(this.vehicle.x, this.vehicle.z)) this.reset();
       } else this.accumulator = 0;
       this.car.update(this.vehicle, this.vehicle.braking);
       this.hud.animateRpm(this.vehicle, dt);
