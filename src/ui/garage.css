@@ -203,6 +203,26 @@ body:not(.playing) .map-panel { visibility: hidden; }
 .map-key-landmark { background: #9cdddd; transform: rotate(45deg); }
 #intro-world { max-width: 12ch; }
 #world-weather { padding: 6px 9px; border-radius: 5px; background: #153438; font-size: 12px; }
+#frame-diagnostics {
+  position: fixed;
+  top: 190px;
+  right: 38px;
+  z-index: 7;
+  width: min(245px, calc(100vw - 24px));
+  padding: 8px 11px;
+  border: 1px solid #cadbd34f;
+  border-radius: 7px;
+  background: #102d33ea;
+  color: #eff5e6;
+  font-size: 11px;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+#frame-diagnostics h2 { margin: 0 0 6px; font-size: 12px; }
+#frame-diagnostics dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 7px; margin: 0; }
+#frame-diagnostics dd { margin: 0; text-align: right; color: var(--lime); }
+#frame-diagnostics #diagnostic-updates { border-top: 1px solid #cadbd34f; padding-top: 5px; margin-top: 5px; }
 @media (max-width: 700px) {
   .progress-actions { left: 12px; right: 12px; max-width: none; gap: 5px; }
   .progress-actions button { font-size: 11px; padding-inline: 8px; }
@@ -215,6 +235,7 @@ body:not(.playing) .map-panel { visibility: hidden; }
   #intro-world { font-size: clamp(36px, 10vw, 68px); }
   .map-heading, .map-footer { font-size: 10px; letter-spacing: 0; }
   .map-legend { margin-inline: 7px; font-size: 10px; }
+  #frame-diagnostics { top: 181px; right: 12px; width: min(210px, calc(100vw - 24px)); font-size: 10px; }
 }
 @media (max-height: 500px) and (max-width: 700px) {
   .intro { top: max(36%, 135px); }

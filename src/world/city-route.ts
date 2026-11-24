@@ -2,6 +2,7 @@ import { CatmullRomCurve3, Vector3 } from 'three';
 import type { VehiclePose } from '../physics/vehicle';
 
 export interface MapPoint { readonly x: number; readonly z: number }
+export interface RoadMatch { distance: number; index: number }
 
 export const CITY_ROAD_WIDTH = 22;
 export const cityMapBounds = { minX: -555, maxX: 575, minZ: -500, maxZ: 500 } as const;
@@ -29,9 +30,34 @@ cityTrack.arcLengthDivisions = 1024;
 cityTrack.updateArcLengths();
 
 export const cityRoadSamples: readonly MapPoint[] = Object.freeze(cityTrack.getSpacedPoints(760));
-export const citySideRoads: readonly (readonly MapPoint[])[] = Object.freeze([
-  Object.freeze(Array.from({ length: 51 }, (_, i) => roundaboutPoint(Math.PI + i * Math.PI / 50))),
+const roundaboutReturn = Object.freeze(Array.from({ length: 51 }, (_, i) => roundaboutPoint(Math.PI + i * Math.PI / 50)));
+
+function closestMainSample(x: number, z: number) {
+  let best = 0;
+  let distance = Infinity;
+  for (let i = 0; i < cityRoadSamples.length - 1; i++) {
+    const point = cityRoadSamples[i];
+    const candidate = (point.x - x) ** 2 + (point.z - z) ** 2;
+    if (candidate < distance) {
+      best = i;
+      distance = candidate;
+    }
+  }
+  return best;
+}
+
+const entryIndex = closestMainSample(455, -235);
+const exitIndex = closestMainSample(395, 272);
+const connectorStart = cityRoadSamples[entryIndex];
+const connectorEnd = cityRoadSamples[exitIndex];
+const connectorCurve = new CatmullRomCurve3([
+  onGround(connectorStart.x, connectorStart.z), onGround(386, -213), onGround(333, -165),
+  onGround(328, -84), onGround(323, 35), onGround(329, 147), onGround(349, 225),
+  onGround(connectorEnd.x, connectorEnd.z),
 ]);
+const connectorPath: readonly MapPoint[] = Object.freeze(connectorCurve.getSpacedPoints(150));
+export const cityConnector = Object.freeze({ entryIndex, exitIndex, path: connectorPath });
+export const citySideRoads: readonly (readonly MapPoint[])[] = Object.freeze([roundaboutReturn, connectorPath]);
 export const cityTrackLength = cityTrack.getLength();
 
 const riverStart = -840;
@@ -71,7 +97,7 @@ const citySegments = cityPaths.flatMap(path => path.slice(0, -1).map((a, index) 
   return { a, dx, dz, lengthSq: dx * dx + dz * dz, heading: Math.atan2(dx, dz) };
 }));
 
-export function nearestCityRoad(x: number, z: number) {
+export function nearestCityRoad(x: number, z: number, result: RoadMatch = { distance: 0, index: 0 }): RoadMatch {
   let distanceSq = Infinity;
   let index = 0;
   for (let i = 0; i < citySegments.length; i++) {
@@ -80,7 +106,9 @@ export function nearestCityRoad(x: number, z: number) {
     const d = (x - a.x - t * dx) ** 2 + (z - a.z - t * dz) ** 2;
     if (d < distanceSq) { distanceSq = d; index = i; }
   }
-  return { distance: Math.sqrt(distanceSq), index };
+  result.distance = Math.sqrt(distanceSq);
+  result.index = index;
+  return result;
 }
 
 const rightLaneOffset = CITY_ROAD_WIDTH / 4;
@@ -97,10 +125,12 @@ const start = cityTrack.getPointAt(0.035);
 const direction = cityTrack.getTangentAt(0.035);
 export const citySpawn = rightLane(start.x, start.z, Math.atan2(direction.x, direction.z));
 
+const waterRoadMatch: RoadMatch = { distance: 0, index: 0 };
+
 export function isCityOutOfBounds(x: number, z: number) {
   return x < cityMapBounds.minX || x > cityMapBounds.maxX
     || z < cityMapBounds.minZ || z > cityMapBounds.maxZ
-    || (isCityWater(x, z) && nearestCityRoad(x, z).distance > CITY_ROAD_WIDTH / 2);
+    || (isCityWater(x, z) && nearestCityRoad(x, z, waterRoadMatch).distance > CITY_ROAD_WIDTH / 2);
 }
 
 const checkpointSites = [
@@ -115,7 +145,7 @@ const checkpointSites = [
 ] as const;
 
 export const cityCheckpoints = Object.freeze(checkpointSites.map(site => {
-  const { index } = nearestCityRoad(site.x, site.z);
+  const index = closestMainSample(site.x, site.z);
   const { a, heading } = citySegments[index];
   return Object.freeze({ ...site, x: a.x, z: a.z, heading });
 }));

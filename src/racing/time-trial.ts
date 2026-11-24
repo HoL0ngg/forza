@@ -22,12 +22,32 @@ export class TimeTrial {
   get checkpointIndex() { return this.index; }
   get checkpointCount() { return checkpoints.length; }
 
+  getSnapshot() {
+    return { running: this.running, elapsed: this.elapsed, index: this.index, previous: { ...this.previous } };
+  }
+
+  loadSnapshot(state: ReturnType<TimeTrial['getSnapshot']>) {
+    if (!state || typeof state.running !== 'boolean' || !Number.isFinite(state.elapsed) || state.elapsed < 0
+      || !Number.isInteger(state.index) || state.index < 0 || state.index > checkpoints.length
+      || (state.running && state.index === checkpoints.length)
+      || (!state.running && state.index !== 0 && state.index !== checkpoints.length)
+      || !Number.isFinite(state.previous?.x) || !Number.isFinite(state.previous?.z)) {
+      throw new Error('Invalid time trial snapshot');
+    }
+    this.running = state.running;
+    this.elapsed = state.elapsed;
+    this.index = state.index;
+    this.previous.x = state.previous.x;
+    this.previous.z = state.previous.z;
+  }
+
   /** The caller resets the vehicle to spawn before starting and cancels on reset/vehicle changes. */
   start() {
     this.running = true;
     this.elapsed = 0;
     this.index = 0;
-    this.previous = { x: spawn.x, z: spawn.z };
+    this.previous.x = spawn.x;
+    this.previous.z = spawn.z;
   }
 
   cancel() {
@@ -63,7 +83,8 @@ export class TimeTrial {
       // shortcut: gates validate order/direction, add continuous route bounds if competitive racing is introduced.
       if (Math.abs(lateral) <= ROAD_WIDTH / 2 + 1) this.index++;
     }
-    this.previous = { x: pose.x, z: pose.z };
+    this.previous.x = pose.x;
+    this.previous.z = pose.z;
     if (this.index !== checkpoints.length) return null;
     this.running = false;
     return { elapsedMs: this.elapsedMs };

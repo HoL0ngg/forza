@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import {
-  CITY_ROAD_WIDTH, cityBridges, cityCheckpoints, cityLandmarks, cityRoadSamples, cityRoundabout,
+  CITY_ROAD_WIDTH, cityBridges, cityCheckpoints, cityConnector, cityLandmarks, cityRoadSamples, cityRoundabout,
   citySideRoads, cityWaterPaths, isCityWater, nearestCityRoad, riverBankX,
 } from './city-route';
 import type { MapPoint } from './city-route';
@@ -136,7 +136,10 @@ function addRoads(scene: THREE.Scene) {
     );
   });
   const markings: Piece[] = [];
+  const junctions = [cityRoadSamples[cityConnector.entryIndex], cityRoadSamples[cityConnector.exitIndex]];
   for (const path of allPaths) for (let i = 1; i < path.length - 1; i++) {
+    const point = path[i];
+    if (junctions.some(junction => Math.hypot(junction.x - point.x, junction.z - point.z) < halfWidth + 5)) continue;
     const frame = roadFrame(path, i);
     for (const offset of [-halfWidth + 0.55, halfWidth - 0.55, -0.23, 0.23]) {
       const { x, z } = frame.offset(offset);

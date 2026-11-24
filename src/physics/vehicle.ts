@@ -1,11 +1,24 @@
 import type { DrivingInput } from '../core/input';
 import { Transmission } from './transmission';
+import type { TransmissionSnapshot } from './transmission';
 import { createDefaultTuning } from '../tuning/tuning';
 import type { TuningConfig } from '../tuning/tuning';
 import { gt01 } from '../data/vehicles/gt01';
 import type { VehicleDefinition } from '../data/vehicles/types';
 
 export interface VehiclePose { x: number; z: number; heading: number }
+
+export interface VehicleSnapshot extends VehiclePose {
+  vehicleId: string;
+  speed: number;
+  steering: number;
+  distance: number;
+  wheelAngle: number;
+  engineThrottle: number;
+  braking: boolean;
+  transmission: TransmissionSnapshot;
+}
+
 export const neutralInput: DrivingInput = { throttle: 0, brake: 0, steer: 0, handbrake: false };
 
 /** MVP: kinematic bicycle model, in metres, seconds and radians. No rigid-body simulation yet. */
@@ -24,6 +37,37 @@ export class Vehicle {
   constructor(private spawn: VehiclePose, config: TuningConfig | undefined = undefined, readonly definition: VehicleDefinition = gt01) {
     this.transmission = new Transmission(config ?? createDefaultTuning(definition), definition);
     this.reset();
+  }
+
+  getSnapshot(): VehicleSnapshot {
+    return {
+      vehicleId: this.definition.id,
+      x: this.x, z: this.z, heading: this.heading, speed: this.speed, steering: this.steering,
+      distance: this.distance, wheelAngle: this.wheelAngle, engineThrottle: this.engineThrottle,
+      braking: this.braking, transmission: this.transmission.getSnapshot(),
+    };
+  }
+
+  loadSnapshot(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid vehicle snapshot.');
+    const state = value as Partial<VehicleSnapshot>;
+    const { x, z, heading, speed, steering, distance, wheelAngle, engineThrottle, braking } = state;
+    const finite = (input: unknown): input is number => typeof input === 'number' && Number.isFinite(input);
+    if (state.vehicleId !== this.definition.id || !finite(x) || !finite(z) || !finite(heading) || !finite(speed)
+      || !finite(steering) || !finite(distance) || distance < 0 || !finite(wheelAngle)
+      || !finite(engineThrottle) || engineThrottle < 0 || engineThrottle > 1 || typeof braking !== 'boolean') {
+      throw new Error('Invalid vehicle snapshot.');
+    }
+    this.transmission.loadSnapshot(state.transmission);
+    this.x = x;
+    this.z = z;
+    this.heading = heading;
+    this.speed = speed;
+    this.steering = steering;
+    this.distance = distance;
+    this.wheelAngle = wheelAngle;
+    this.engineThrottle = engineThrottle;
+    this.braking = braking;
   }
 
   reset(pose = this.spawn) {

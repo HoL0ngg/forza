@@ -50,6 +50,31 @@ function mapPin<T extends 'circle' | 'rect'>(type: T, name: string, attributes: 
   return pin;
 }
 
+export interface FrameDiagnostics {
+  frameMeanMs: number;
+  frameP95Ms: number;
+  drawCalls: number;
+  triangles: number;
+  geometries: number;
+  textures: number;
+  updates: Readonly<Record<string, number>>;
+  npcCount?: number;
+  pedestrianCount?: number;
+  steps?: number;
+}
+
+const diagnosticNumber = new Intl.NumberFormat('vi-VN');
+const diagnosticTime = new Intl.NumberFormat('vi-VN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const formatMilliseconds = (value: number) => `${diagnosticTime.format(value)} ms`;
+
+function setText(node: Node, value: string) {
+  if (node.textContent !== value) node.textContent = value;
+}
+
+function setAttribute(element: Element, name: string, value: string) {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+}
+
 export class Hud {
   private speed: HTMLElement;
   private distance: HTMLElement;
@@ -63,6 +88,9 @@ export class Hud {
   private drivetrainLabel: HTMLElement;
   private needle: SVGElement;
   private marker: SVGElement;
+  private readonly diagnostics: HTMLElement;
+  private readonly diagnosticMetrics: HTMLDListElement;
+  private readonly diagnosticUpdates: HTMLDListElement;
   private project = mapProjection(getWorldDefinition().mapBounds);
   private toastTimeout = 0;
   readonly pauseDialog: HTMLDialogElement;
@@ -112,10 +140,38 @@ export class Hud {
           <div class="gear-actions"><button id="shift-down" aria-label="Xuống số (Q)">− <kbd>Q</kbd></button><span id="drivetrain-label"></span><button id="shift-up" aria-label="Lên số (E)"><kbd>E</kbd> +</button></div>
         </section>
       </div>
+      <aside id="frame-diagnostics" aria-labelledby="diagnostic-title" hidden>
+        <h2 id="diagnostic-title">Chẩn đoán hiệu năng</h2>
+        <dl id="diagnostic-metrics"></dl>
+        <dl id="diagnostic-updates" aria-label="Thời gian cập nhật theo hệ thống"></dl>
+      </aside>
       <div class="touch-controls" aria-label="Điều khiển cảm ứng"><div><button data-drive="KeyA" aria-label="Rẽ trái">←</button><button data-drive="KeyD" aria-label="Rẽ phải">→</button></div><div><button data-drive="Space" aria-label="Phanh tay">P</button><button data-drive="KeyS" aria-label="Phanh hoặc lùi">↓</button><button class="touch-throttle" data-drive="KeyW" aria-label="Tăng tốc">↑</button></div></div>
       <div class="toast" id="toast" role="status"></div>
       <div class="edition-label">EXPLORER SERIES <span>02 / TUNED</span></div>
-      <dialog id="pause-dialog" aria-labelledby="pause-title"><form method="dialog"><div class="eyebrow">DỪNG MỘT NHỊP</div><h2 id="pause-title">Tạm nghỉ bên đường.</h2><p>Cung đường vẫn đang chờ bạn.</p><button class="start-button" id="resume" value="resume">Tiếp tục lái ${icons.play}</button><div class="dialog-actions"><button type="button" id="pause-tuning">${icons.tuning} Tuning hộp số & động cơ</button><button type="button" id="pause-reset">${icons.reset} Đưa xe về điểm đầu</button><button type="button" id="quality">Đồ họa: Cao</button><button type="button" id="pause-camera">${icons.camera} Camera: Gần</button></div><div class="audio-controls"><label for="volume">Âm lượng</label><input id="volume" type="range" min="0" max="100" step="1" value="35"/><output for="volume" id="volume-value">35%</output></div><button class="text-button" value="resume">Esc để tiếp tục</button></form></dialog>
+      <dialog id="pause-dialog" aria-labelledby="pause-title">
+        <form method="dialog">
+          <div class="eyebrow">DỪNG MỘT NHỊP</div><h2 id="pause-title">Tạm nghỉ bên đường.</h2><p>Cung đường vẫn đang chờ bạn.</p>
+          <button class="start-button" id="resume" value="resume">Tiếp tục lái ${icons.play}</button>
+          <div class="dialog-actions">
+            <button type="button" id="pause-tuning">${icons.tuning} Tuning hộp số & động cơ</button>
+            <button type="button" id="pause-reset">${icons.reset} Đưa xe về điểm đầu</button>
+            <button type="button" id="quality">Đồ họa: Cao</button>
+            <button type="button" id="pause-camera">${icons.camera} Camera: Gần</button>
+          </div>
+          <div class="traffic-setting">
+            <label for="traffic-density">Mật độ giao thông</label>
+            <select id="traffic-density" aria-describedby="traffic-density-note">
+              <option value="off">Tắt</option>
+              <option value="low">Thấp</option>
+              <option value="medium" selected>Vừa</option>
+              <option value="high">Cao</option>
+            </select>
+            <p id="traffic-density-note" hidden>Chỉ áp dụng trong Thành phố Sông Sài Gòn.</p>
+          </div>
+          <div class="audio-controls"><label for="volume">Âm lượng</label><input id="volume" type="range" min="0" max="100" step="1" value="35"/><output for="volume" id="volume-value">35%</output></div>
+          <button class="text-button" value="resume">Esc để tiếp tục</button>
+        </form>
+      </dialog>
       <dialog id="help-dialog" aria-labelledby="help-title"><form method="dialog"><div class="eyebrow">LÀM CHỦ CUNG ĐƯỜNG</div><h2 id="help-title">Cầm lái thôi.</h2>
         <dl class="controls-list">
           <div><dt><kbd>W</kbd> / <kbd>↑</kbd></dt><dd>Tăng ga theo số đang chọn</dd></div>
@@ -142,6 +198,9 @@ export class Hud {
     this.drivetrainLabel = document.querySelector('#drivetrain-label')!;
     this.needle = document.querySelector('#rpm-needle')!;
     this.marker = document.querySelector('#map-marker')!;
+    this.diagnostics = document.querySelector('#frame-diagnostics')!;
+    this.diagnosticMetrics = this.diagnostics.querySelector('#diagnostic-metrics')!;
+    this.diagnosticUpdates = this.diagnostics.querySelector('#diagnostic-updates')!;
     this.pauseDialog = document.querySelector('#pause-dialog')!;
     this.helpDialog = document.querySelector('#help-dialog')!;
     const picker = document.querySelector<HTMLSelectElement>('#world-select')!;
@@ -154,6 +213,37 @@ export class Hud {
     this.setWorld(getWorldDefinition());
   }
 
+  setDiagnostics(metrics?: FrameDiagnostics) {
+    this.diagnostics.hidden = !metrics;
+    if (!metrics) return;
+
+    const rows: [string, string][] = [
+      ['Khung hình trung bình', formatMilliseconds(metrics.frameMeanMs)],
+      ['Khung hình p95', formatMilliseconds(metrics.frameP95Ms)],
+      ['Lệnh vẽ', diagnosticNumber.format(metrics.drawCalls)],
+      ['Tam giác', diagnosticNumber.format(metrics.triangles)],
+      ['Geometry', diagnosticNumber.format(metrics.geometries)],
+      ['Texture', diagnosticNumber.format(metrics.textures)],
+    ];
+    if (metrics.npcCount !== undefined) rows.push(['Xe NPC', diagnosticNumber.format(metrics.npcCount)]);
+    if (metrics.pedestrianCount !== undefined) rows.push(['Người đi bộ', diagnosticNumber.format(metrics.pedestrianCount)]);
+    if (metrics.steps !== undefined) rows.push(['Bước mô phỏng', diagnosticNumber.format(metrics.steps)]);
+    this.updateDiagnosticsList(this.diagnosticMetrics, rows);
+    this.updateDiagnosticsList(this.diagnosticUpdates, Object.entries(metrics.updates).map(([label, time]) => [label, formatMilliseconds(time)]));
+  }
+
+  private updateDiagnosticsList(list: HTMLDListElement, rows: readonly [string, string][]) {
+    if (list.children.length !== rows.length * 2) list.replaceChildren();
+    for (const [index, [label, value]] of rows.entries()) {
+      const term = list.children[index * 2] ?? document.createElement('dt');
+      const description = list.children[index * 2 + 1] ?? document.createElement('dd');
+      if (term.textContent !== label) term.textContent = label;
+      if (description.textContent !== value) description.textContent = value;
+      if (!term.parentElement) list.append(term, description);
+    }
+    list.hidden = rows.length === 0;
+  }
+
   setWorld(world: WorldDefinition) {
     this.project = mapProjection(world.mapBounds);
     document.querySelector<HTMLElement>('#intro')!.dataset.world = world.id;
@@ -164,6 +254,8 @@ export class Hud {
     document.querySelector('#minimap')!.setAttribute('aria-label', `Bản đồ đường chạy — ${world.name}`);
     document.querySelector('#intro-world-length')!.textContent = `${(world.trackLength / 1000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} km đường vòng`;
     const isCoast = world.id === 'coast';
+    this.pauseDialog.querySelector<HTMLSelectElement>('#traffic-density')!.disabled = isCoast;
+    this.pauseDialog.querySelector<HTMLElement>('#traffic-density-note')!.hidden = !isCoast;
     document.querySelector('#intro-world-description')!.textContent = isCoast
       ? 'Đua tính giờ ven biển để kiếm credits và mở rộng bộ sưu tập xe.'
       : 'Lái qua đại lộ, cầu và hai bờ sông. Khám phá các địa danh trên đường vòng.';
@@ -202,33 +294,43 @@ export class Hud {
 
   private positionMarker(pose: MapPoint & { heading: number }) {
     const [x, y] = this.project(pose);
-    this.marker.setAttribute('transform', `translate(${x} ${y}) rotate(${180 - pose.heading * 180 / Math.PI})`);
+    const degrees = 180 - pose.heading * 180 / Math.PI;
+    setAttribute(this.marker, 'transform', `translate(${x} ${y}) rotate(${degrees.toFixed(1)})`);
   }
 
   update(vehicle: Vehicle, onRoad: boolean) {
     const kmh = Math.round(Math.abs(vehicle.speed) * 3.6);
-    this.speed.textContent = String(kmh).padStart(3, '0');
+    setText(this.speed, String(kmh).padStart(3, '0'));
     const transmission = vehicle.transmission;
-    this.drivetrainLabel.textContent = `${vehicle.definition.name} / ${vehicle.definition.transmission.gearCount}-SPEED`;
-    this.gear.textContent = transmission.gearLabel;
-    this.mode.innerHTML = `${transmission.mode === 'automatic' ? 'AUTO' : 'MANUAL'} <kbd>T</kbd>`;
-    this.mode.setAttribute('aria-label', `Hộp số ${transmission.mode === 'automatic' ? 'tự động' : 'số tay'}. Nhấn để đổi chế độ.`);
+    setText(this.drivetrainLabel, `${vehicle.definition.name} / ${vehicle.definition.transmission.gearCount}-SPEED`);
+    setText(this.gear, transmission.gearLabel);
+    const automatic = transmission.mode === 'automatic';
+    setText(this.mode.firstChild!, automatic ? 'AUTO ' : 'MANUAL ');
+    setAttribute(this.mode, 'aria-label', automatic
+      ? 'Hộp số tự động. Nhấn để đổi chế độ.'
+      : 'Hộp số tay. Nhấn để đổi chế độ.');
     const hot = transmission.rpm > transmission.redlineRpm * 0.88;
     const shift = transmission.rpm > transmission.redlineRpm * 0.94;
     this.tachometer.classList.toggle('near-redline', hot);
     this.tachometer.classList.toggle('shift-now', shift && !transmission.isShifting);
-    this.shiftStatus.textContent = transmission.isShifting ? transmission.isRevMatching ? 'BÙ TUA' : 'SANG SỐ' : shift ? 'LÊN SỐ' : transmission.currentGear === 0 ? 'SỐ N' : 'SẴN SÀNG';
-    document.body.classList.toggle('manual-mode', transmission.mode === 'manual');
-    this.distance.innerHTML = `${(vehicle.distance / 1000).toFixed(2)} <small>km</small>`;
-    this.surface.textContent = onRoad ? 'ĐƯỜNG NHỰA' : 'NGOÀI ĐƯỜNG';
+    setText(this.shiftStatus, transmission.isShifting ? transmission.isRevMatching ? 'BÙ TUA' : 'SANG SỐ' : shift ? 'LÊN SỐ' : transmission.currentGear === 0 ? 'SỐ N' : 'SẴN SÀNG');
+    document.body.classList.toggle('manual-mode', !automatic);
+    setText(this.distance.firstChild!, `${(vehicle.distance / 1000).toFixed(2)} `);
+    setText(this.surface, onRoad ? 'ĐƯỜNG NHỰA' : 'NGOÀI ĐƯỜNG');
     this.positionMarker(vehicle);
+  }
+
+  resetRpm(vehicle: Vehicle) {
+    this.displayedRpm = vehicle.transmission.rpm;
+    this.animateRpm(vehicle, 0);
   }
 
   animateRpm(vehicle: Vehicle, dt: number) {
     this.displayedRpm ??= vehicle.transmission.rpm;
     this.displayedRpm += (vehicle.transmission.rpm - this.displayedRpm) * (1 - Math.exp(-14 * dt));
-    this.needle.setAttribute('transform', `rotate(${-145 + Math.min(this.displayedRpm / vehicle.transmission.redlineRpm, 1) * 290} 120 108)`);
-    this.rpmText.textContent = String(Math.round(this.displayedRpm / 10) * 10);
+    const degrees = -145 + Math.min(this.displayedRpm / vehicle.transmission.redlineRpm, 1) * 290;
+    setAttribute(this.needle, 'transform', `rotate(${degrees.toFixed(1)} 120 108)`);
+    setText(this.rpmText, String(Math.round(this.displayedRpm / 10) * 10));
   }
 
   setSound(enabled: boolean, running: boolean) {

@@ -1,4 +1,5 @@
 import { CatmullRomCurve3, Vector3 } from 'three';
+import type { RoadMatch } from './city-route';
 
 export const ROAD_WIDTH = 15;
 export const track = new CatmullRomCurve3([
@@ -15,7 +16,7 @@ const spawnPoint = track.getPointAt(0.005);
 const spawnTangent = track.getTangentAt(0.005);
 export const spawn = { x: spawnPoint.x, z: spawnPoint.z, heading: Math.atan2(spawnTangent.x, spawnTangent.z) };
 
-export function nearestRoad(x: number, z: number) {
+export function nearestRoad(x: number, z: number, result: RoadMatch = { distance: 0, index: 0 }): RoadMatch {
   let distanceSq = Infinity;
   let index = 0;
   for (let i = 0; i < roadSamples.length - 1; i++) {
@@ -27,7 +28,9 @@ export function nearestRoad(x: number, z: number) {
     const d = (x - a.x - t * dx) ** 2 + (z - a.z - t * dz) ** 2;
     if (d < distanceSq) { distanceSq = d; index = i; }
   }
-  return { distance: Math.sqrt(distanceSq), index };
+  result.distance = Math.sqrt(distanceSq);
+  result.index = index;
+  return result;
 }
 
 export function roadPose(index: number) {

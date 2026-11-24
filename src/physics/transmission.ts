@@ -5,6 +5,21 @@ import type { TuningConfig } from '../tuning/tuning';
 
 export type TransmissionMode = 'automatic' | 'manual';
 export type ShiftResult = 'ok' | 'busy' | 'redline' | 'direction' | 'limit';
+
+export interface TransmissionSnapshot {
+  currentGear: number;
+  rpm: number;
+  mode: TransmissionMode;
+  isClutchEngaged: boolean;
+  isRevMatching: boolean;
+  shiftSerial: number;
+  lastShift: 'up' | 'down' | 'select';
+  config: TuningConfig;
+  shiftRemaining: number;
+  cooldown: number;
+  pendingGear: number | null;
+}
+
 /** Default GT-01 shift time, retained for callers/tests that use the legacy constant. */
 export const SHIFT_DURATION = gt01.transmission.shiftDuration;
 
@@ -33,6 +48,45 @@ export class Transmission {
   ratio(gear = this.currentGear) { return gear === -1 ? this.vehicle.transmission.reverseRatio : gear === 0 ? 0 : this.config.gearRatios[gear - 1]; }
   predictedRpm(speed: number, gear = this.currentGear) {
     return rpmAtSpeed(speed, this.ratio(gear), this.config.finalDrive, this.vehicle.wheelRadius);
+  }
+
+  getSnapshot(): TransmissionSnapshot {
+    return {
+      currentGear: this.currentGear, rpm: this.rpm, mode: this.mode,
+      isClutchEngaged: this.isClutchEngaged, isRevMatching: this.isRevMatching,
+      shiftSerial: this.shiftSerial, lastShift: this.lastShift, config: this.currentConfig,
+      shiftRemaining: this.shiftRemaining, cooldown: this.cooldown, pendingGear: this.pendingGear,
+    };
+  }
+
+  loadSnapshot(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid transmission snapshot.');
+    const state = value as Partial<TransmissionSnapshot>;
+    const { currentGear, rpm, mode, isClutchEngaged, isRevMatching, shiftSerial, lastShift, shiftRemaining, cooldown, pendingGear } = state;
+    const gearCount = this.vehicle.transmission.gearCount;
+    const validGear = (gear: unknown): gear is number => typeof gear === 'number' && Number.isInteger(gear) && gear >= -1 && gear <= gearCount;
+    if (!validGear(currentGear) || (pendingGear !== null && (!validGear(pendingGear) || pendingGear === currentGear))
+      || typeof rpm !== 'number' || !Number.isFinite(rpm) || rpm < 0
+      || (mode !== 'manual' && mode !== 'automatic')
+      || typeof shiftSerial !== 'number' || !Number.isSafeInteger(shiftSerial) || shiftSerial < 0
+      || (lastShift !== 'up' && lastShift !== 'down' && lastShift !== 'select')
+      || typeof isClutchEngaged !== 'boolean' || typeof isRevMatching !== 'boolean'
+      || typeof shiftRemaining !== 'number' || !Number.isFinite(shiftRemaining)
+      || typeof cooldown !== 'number' || !Number.isFinite(cooldown) || cooldown < 0) {
+      throw new Error('Invalid transmission snapshot.');
+    }
+    const config = validateConfig(state.config, this.vehicle);
+    this.config = config;
+    this.currentGear = currentGear;
+    this.rpm = rpm;
+    this.mode = mode;
+    this.isClutchEngaged = isClutchEngaged;
+    this.isRevMatching = isRevMatching;
+    this.shiftSerial = shiftSerial;
+    this.lastShift = lastShift;
+    this.shiftRemaining = shiftRemaining;
+    this.cooldown = cooldown;
+    this.pendingGear = pendingGear;
   }
 
   reset() {

@@ -3,7 +3,7 @@ import {
   CITY_ROAD_WIDTH, cityCheckpoints, cityLandmarks, cityMapBounds, cityRoadPose, cityRoadSamples,
   citySideRoads, citySpawn, cityTrackLength, cityWaterPaths, isCityOutOfBounds, nearestCityRoad,
 } from './city-route';
-import type { MapPoint } from './city-route';
+import type { MapPoint, RoadMatch } from './city-route';
 import type { VehiclePose } from '../physics/vehicle';
 
 export interface WorldDefinition {
@@ -14,7 +14,7 @@ export interface WorldDefinition {
   readonly roadSamples: readonly MapPoint[];
   readonly sideRoads?: readonly (readonly MapPoint[])[];
   readonly trackLength: number;
-  readonly nearestRoad: (x: number, z: number) => { distance: number; index: number };
+  readonly nearestRoad: (x: number, z: number, result?: RoadMatch) => RoadMatch;
   readonly roadPose: (index: number) => VehiclePose;
   readonly isOutOfBounds: (x: number, z: number) => boolean;
   readonly mapBounds: Readonly<{ minX: number; maxX: number; minZ: number; maxZ: number }>;

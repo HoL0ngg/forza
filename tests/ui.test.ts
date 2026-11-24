@@ -149,6 +149,8 @@ test('input ignores typing in tuning fields and releases throttle on blur', () =
   assert.equal(input.read().throttle, 1);
   window.dispatchEvent(new dom.window.Event('blur'));
   assert.equal(input.read().throttle, 0); assert.equal(blurred, 1);
+  window.dispatchEvent(new dom.window.KeyboardEvent('keydown', { code: 'KeyW', repeat: true }));
+  assert.equal(input.read().throttle, 0, 'a held key cannot restart after focus is lost');
   document.body.dispatchEvent(new dom.window.KeyboardEvent('keydown', { code: 'KeyW', bubbles: true }));
   assert.equal(input.read().throttle, 1);
   document.body.dispatchEvent(new dom.window.KeyboardEvent('keyup', { code: 'KeyW', bubbles: true }));
@@ -212,6 +214,55 @@ test('touch control events release held input on cancellation and pause clearing
   assert.equal(input.read().throttle, 0);
   assert.ok(!throttle.classList.contains('pressed'));
   dom.window.close();
+});
+
+test('pause traffic density control is native, labeled and exposes each preset', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  try {
+    const density = hud.pauseDialog.querySelector<HTMLSelectElement>('#traffic-density');
+    assert.equal(density?.tagName, 'SELECT');
+    assert.match(density?.labels?.item(0)?.textContent ?? '', /giao thông/i);
+    assert.deepEqual([...density!.options].map(option => option.value), ['off', 'low', 'medium', 'high']);
+    assert.equal(density!.value, 'medium');
+    const shortcuts: string[] = [];
+    const input = new Input(key => shortcuts.push(key), () => {});
+    const arrow = new dom.window.KeyboardEvent('keydown', { code: 'ArrowUp', bubbles: true, cancelable: true });
+    density!.dispatchEvent(arrow);
+    assert.equal(arrow.defaultPrevented, false);
+    assert.equal(input.read().throttle, 0);
+    assert.deepEqual(shortcuts, []);
+    density!.value = 'high';
+    hud.setWorld(getWorldDefinition('coast'));
+    assert.equal(density!.disabled, true);
+    const note = hud.pauseDialog.querySelector<HTMLElement>(`#${density!.getAttribute('aria-describedby')}`);
+    assert.ok(note?.textContent && !note.hidden);
+    hud.setWorld(getWorldDefinition('city'));
+    assert.equal(density!.disabled, false);
+    assert.equal(density!.value, 'high');
+  } finally {
+    dom.window.close();
+  }
+});
+
+test('diagnostics stay hidden until requested and include traffic and renderer counters', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  try {
+    const overlay = document.querySelector<HTMLElement>('#frame-diagnostics')!;
+    assert.ok(overlay.hidden);
+    hud.setDiagnostics({
+      frameMeanMs: 16.7, frameP95Ms: 32, drawCalls: 42, triangles: 296,
+      geometries: 57, textures: 12, updates: { 'Giao thông': 0.9 }, npcCount: 8, pedestrianCount: 2, steps: 1.9,
+    });
+    assert.equal(overlay.hidden, false);
+    assert.match(overlay.textContent ?? '', /p95/i);
+    for (const text of ['42', '296', '57', '12', 'Giao thông']) assert.ok(overlay.textContent?.includes(text));
+    hud.setDiagnostics();
+    assert.ok(overlay.hidden);
+  } finally {
+    dom.window.close();
+  }
 });
 
 test('garage exposes keyboard-focusable browsing, accessible status and separate purchase/selection', () => {

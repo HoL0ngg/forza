@@ -43,6 +43,27 @@
 .audio-controls{display:flex;align-items:center;gap:12px;justify-content:center;font-size:14px;padding:14px 0}
 .audio-controls input{accent-color:var(--lime);width:130px}
 .audio-controls output{min-width:40px;font-variant-numeric:tabular-nums}
+.traffic-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(92px, auto);
+  align-items: center;
+  gap: 6px 12px;
+  margin: 12px 0 0;
+  font-size: 14px;
+}
+.traffic-setting select {
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid #a1bbaa66;
+  border-radius: 5px;
+  background: #102d33;
+  color: inherit;
+  font: inherit;
+}
+.traffic-setting select:focus-visible { outline: 2px solid var(--lime); outline-offset: 2px; }
+.traffic-setting select:disabled { color: var(--muted); }
+.traffic-setting p { grid-column: 1 / -1; margin: 0; font-size: 12px; line-height: 1.45; }
 .tuning-dialog::backdrop{background:#08222d9e}
 @media(max-width:800px){.tuning-dialog{padding:22px}.tuning-grid{grid-template-columns:1fr;gap:10px}.tuning-header h2{font-size:23px}.tuning-fields{display:grid;grid-template-columns:1fr;gap:0}.tuning-footer{flex-direction:column;align-items:stretch}.preset-actions{justify-content:space-between}.preset-actions button{flex:1}.tuning-dialog .start-button{width:100%;justify-content:center}.top-actions{gap:5px}.topbar{gap:10px}.brand-sub{display:none}.brand{font-size:14px;gap:7px}.brand-icon{width:29px;height:33px}.utility-button{min-width:35px;min-height:35px}}
 @media(max-width:380px){.tuning-control{grid-template-columns:87px minmax(45px,1fr) 72px;gap:7px}.topbar{padding:16px 12px}.top-actions .icon-button{width:33px;height:33px}.brand{font-size:12px}.engine-metrics span{font-size:10px}}
