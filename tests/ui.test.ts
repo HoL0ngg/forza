@@ -265,6 +265,56 @@ test('diagnostics stay hidden until requested and include traffic and renderer c
   }
 });
 
+test('graphics quality controls expose native labels and a separate effective quality', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  try {
+    const select = hud.pauseDialog.querySelector<HTMLSelectElement>('#quality')!;
+    const auto = hud.pauseDialog.querySelector<HTMLInputElement>('#quality-auto')!;
+    const effective = hud.pauseDialog.querySelector<HTMLElement>('#quality-effective')!;
+    assert.equal(select.tagName, 'SELECT');
+    assert.deepEqual([...select.options].map(option => option.value).sort(), ['high', 'low', 'medium']);
+    assert.ok(select.labels?.item(0)?.textContent?.trim());
+    assert.equal(auto.type, 'checkbox');
+    assert.ok(auto.labels?.item(0)?.textContent?.trim());
+    hud.setQuality('high', true, 'medium');
+    assert.equal(select.value, 'high');
+    assert.equal(auto.checked, true);
+    assert.equal(effective.hidden, false);
+    hud.setQuality('low', false);
+    assert.equal(select.value, 'low');
+    assert.equal(auto.checked, false);
+    assert.equal(effective.hidden, true);
+  } finally { dom.window.close(); }
+});
+
+test('unchanged HUD values do not mutate the speed, drivetrain, map marker or RPM elements', () => {
+  const { dom } = setup();
+  const hud = new Hud();
+  const vehicle = new Vehicle({ x: 0, z: 0, heading: 0 });
+  const observer = new dom.window.MutationObserver(() => {});
+  try {
+    hud.resetRpm(vehicle);
+    hud.update(vehicle, true);
+    for (const id of ['speed', 'gear', 'rpm', 'rpm-needle', 'map-marker', 'surface', 'transmission-mode', 'shift-status']) {
+      observer.observe(document.getElementById(id)!, { childList: true, attributes: true, characterData: true, subtree: true });
+    }
+    for (let i = 0; i < 30; i++) { hud.update(vehicle, true); hud.animateRpm(vehicle, 0.08); }
+    assert.equal(observer.takeRecords().length, 0);
+    vehicle.speed = 12;
+    vehicle.x = 66;
+    vehicle.transmission.rpm = 2000;
+    hud.update(vehicle, false);
+    hud.animateRpm(vehicle, 0.08);
+    assert.equal(document.querySelector('#speed')!.textContent, '043');
+    assert.match(document.querySelector('#surface')!.textContent!, /NGOÀI ĐƯỜNG/);
+    assert.ok(observer.takeRecords().length > 0);
+  } finally {
+    observer.disconnect();
+    dom.window.close();
+  }
+});
+
 test('garage exposes keyboard-focusable browsing, accessible status and separate purchase/selection', () => {
   const { dom } = setup();
   const candidate = getVehicleDefinition('sakura-sprint');

@@ -28,7 +28,7 @@ Mở địa chỉ Vite in ra, thường là `http://127.0.0.1:5173/`. Có thể 
 | Esc, H | Tạm dừng, hướng dẫn |
 | F | Bắt đầu đua tính giờ ở bản đồ ven biển |
 
-Thêm `?debug=1` vào URL để xem thời gian khung hình trung bình và p95, thời gian CPU cập nhật giao thông, số lệnh vẽ, tam giác và tài nguyên renderer. Ở Manual, từ số 1 khi xe dừng, bấm Q về N rồi R và dùng W để lùi. Số N cho phép lên ga tại chỗ. Trên màn hình cảm ứng, dùng các nút ga, phanh, lái và sang số trên HUD. Menu và mất focus tạm dừng mô phỏng và âm thanh, đồng thời xóa input đang giữ.
+Ở Manual, từ số 1 khi xe dừng, bấm Q về N rồi R và dùng W để lùi. Số N cho phép lên ga tại chỗ. Trên màn hình cảm ứng, dùng các nút ga, phanh, lái và sang số trên HUD. Menu và mất focus tạm dừng mô phỏng và âm thanh, đồng thời xóa input đang giữ.
 
 - **Thành phố Sông Sài Gòn** là bản đồ mặc định. Tuyến vòng khoảng 2,7 km đi qua Đại lộ Ánh Dương, Cầu Bắc, vòng xoay Bờ Đông và Cầu Nam. Xe xuất phát và được đưa lại đường ở làn phải. Minimap dùng cùng tọa độ với đường 3D và hiển thị vị trí xe, 5 địa danh và 8 checkpoint khám phá.
 - **Ven biển** dùng lại tuyến đường gốc và chế độ đua tính giờ đã có. Các cổng phải được qua đúng thứ tự, đúng chiều. Hoàn thành nhận 10.000 CR và có thể lập kỷ lục mới. Đổi xe, đổi bản đồ, đặt lại xe hoặc hủy đua sẽ dừng lượt hiện tại.
@@ -57,13 +57,27 @@ Garage có xem trước 3D, lọc theo hãng và so sánh thông số xuất xư
 
 Tiến trình dùng localStorage có phiên bản và thuộc origin đang mở. ID trong hồ sơ cũ được chuyển từ `coast-rally` sang `sakura-sprint` (Pico S) và từ `ferro-gt` sang `sakura-rs` (Aureline R). Nếu đã sở hữu cả xe cũ lẫn xe thay thế, hồ sơ giữ một xe thay thế. Credits và kỷ lục ven biển được giữ. Preset của xe ngừng bán được dùng cho xe thay thế nếu xe thay thế chưa có preset riêng và cấu hình tương thích. Bản ghi gốc giữ nguyên kể cả khi cấu hình cũ nằm ngoài giới hạn của xe mới. Dữ liệu hỏng dùng mặc định, và ứng dụng báo lỗi nếu trình duyệt từ chối lưu.
 
+## Đồ họa và đo hiệu năng
+
+Mở **Tạm nghỉ → Chất lượng đồ họa** để chọn mức chất lượng và bật hoặc tắt **Tự điều chỉnh đồ họa**. Game lưu lựa chọn trong bản ghi đồ họa v1 riêng. Bản ghi trống hoặc hỏng dùng mức Cao với tự động bật. Tự động chỉ hạ mức khi khung hình chậm liên tục trong lúc lái. Game báo khi tự hạ và giữ mức hiệu lực đến khi bạn đổi cài đặt hoặc mở lại. Mức bạn đã chọn hiển thị trong menu và được dùng lại ở lần mở sau.
+
+| Mức | Pixel ratio tối đa | Bóng | Tầm camera | Bán kính chi tiết cảnh | Ngân sách lệnh vẽ / tam giác |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Cao | 1,6 | Một bản đồ bóng 2048 × 2048 | 3.500 m | 575 m | 120 / 130.000 |
+| Vừa | 1,25 | Tắt | 2.850 m | 470 m | 100 / 110.000 |
+| Tiết kiệm | 1 | Tắt | 2.500 m | 350 m | 90 / 100.000 |
+
+Ngân sách tính cả lượt đổ bóng. Cả ba mức chạy không có hậu kỳ. Giao thông có ngân sách riêng **28 xe, 8 người đi bộ, 9 lệnh vẽ và 9.000 tam giác**. Physics luôn chạy theo bước 120 Hz và bù tối đa 8 bước mỗi khung.
+
+Để đo trên máy tính, mở `http://127.0.0.1:5173/?perf=1` (ven biển dùng `?map=coast&perf=1`). Lái khoảng 30 giây ở mỗi cấu hình cần so sánh. Ghi mức chất lượng đang áp dụng, bản đồ, độ phân giải, GPU/trình duyệt và chụp bảng chẩn đoán. Bảng hiển thị frame time trung bình/p95/p99, số bước mô phỏng, thời gian CPU theo hệ thống và bộ đếm renderer. Sau khi lái, mở DevTools → Console, bật Verbose, lọc `[performance]` rồi sao chép vài dòng JSON liên tiếp. Khi tạm dừng, bảng giữ kết quả gần nhất. Xem phương pháp đo, bảng trước/sau và giới hạn trong [báo cáo hiệu năng](docs/performance.md).
+
 ## Kỹ thuật và tài sản
 
 - `src/data/vehicles/` giữ danh mục bất biến và xác thực cấu hình. `src/vehicles/` tạo và giải phóng runtime xe. `src/progression/` và `src/tuning/` xử lý dữ liệu người chơi và preset theo xe.
 - `src/world/` dựng đường, bản đồ và các model procedural. `src/ui/` chứa HUD, garage và bảng tuning. `src/racing/` giữ luật time trial ven biển.
 - Xe chạy bằng mô hình bicycle ở 120 Hz. Tỉ số truyền, mô-men, khối lượng, lực cản, grip và góc lái tác động trực tiếp vào mô phỏng. Công suất trong garage là số ước tính từ torque curve ở cấu hình xuất xưởng.
 - Hình khối xe, đường, nhà, landmark, biển hiệu và màu sắc là tài sản procedural tự thiết kế trong repo. Bố cục thành phố được vẽ tay và cách điệu. Dự án dùng hình học toán học, không nhập tập dữ liệu bản đồ, ảnh, texture, model 3D hay bản thu âm bên ngoài. Âm thanh động cơ được tổng hợp bằng Web Audio.
-- Các cụm hình học lặp lại được vẽ bằng instancing. Nhà phố, cây và đèn được gom theo ô, chỉ bật các ô trong vùng quanh xe. Đồ họa Cao giới hạn pixel ratio ở 1,6 và bật bóng. Mức Vừa giới hạn ở 1,25, mức Tiết kiệm ở 1, cả hai tắt bóng. Tài nguyên cảnh và xe được giải phóng khi thay cảnh hoặc thay xe. FPS trên thiết bị thật chưa được đo.
+- Các cụm hình học lặp lại được vẽ bằng instancing. Nhà phố, cây và đèn được gom theo ô, chỉ bật các ô trong vùng quanh xe. Cảnh tĩnh ở màn hình chào, pause và garage chỉ vẽ lại khi có thay đổi. Tab ẩn dừng vòng lặp render. Tài nguyên cảnh và xe được giải phóng khi thay cảnh hoặc thay xe.
 
 Giao diện ưu tiên Be Vietnam Pro và Barlow Condensed nếu đã cài trên máy, rồi dùng font hệ thống. Xe NPC, người đi bộ và đèn giao thông cũng dùng hình học procedural của dự án. Khi chơi, ứng dụng không cần dịch vụ font hoặc dữ liệu giao thông bên ngoài.
 

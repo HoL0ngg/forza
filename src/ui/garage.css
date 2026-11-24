@@ -242,6 +242,18 @@ body:not(.playing) .map-panel { visibility: hidden; }
   .minimap { height: 84px; }
   .map-legend { display: none; }
 }
+@media (max-height: 620px) and (min-width: 600px) {
+  #frame-diagnostics {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    column-gap: 12px;
+    top: 132px;
+    right: 12px;
+    width: min(460px, calc(100vw - 24px));
+  }
+  #frame-diagnostics h2 { grid-column: 1 / -1; }
+  #frame-diagnostics #diagnostic-updates { border-top: 0; padding-top: 0; margin-top: 0; align-self: start; }
+}
 @media (pointer: coarse) and (max-width: 700px) {
   .topbar { padding-inline: 12px; gap: 5px; }
   .top-actions .icon-button { width: 44px; height: 44px; }

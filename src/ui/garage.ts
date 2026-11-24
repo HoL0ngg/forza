@@ -52,12 +52,27 @@ export class Garage {
   private camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
   private car?: Car;
   private angle = 0.65;
+  private previewWidth = 0;
+  private previewHeight = 0;
+  private previewPixelRatio = 1;
+  private previewDirty = false;
   private previewAvailable = true;
   private disposed = false;
-  private readonly onResize = () => { if (this.dialog.open) this.renderPreview(); };
+  private readonly onResize = () => {
+    if (!this.dialog.open || document.hidden) return;
+    if (this.resizePreview() || this.previewDirty) this.renderPreview();
+  };
+  private readonly resizeObserver?: ResizeObserver;
+  private readonly previewCanvas: HTMLCanvasElement;
   private readonly brands: HTMLElement;
   private readonly cars: HTMLElement;
   private readonly action: HTMLButtonElement;
+  private readonly compareBody: HTMLTableSectionElement;
+  private readonly currentModel: HTMLElement;
+  private readonly viewedModel: HTMLElement;
+  private readonly stockStats = new Map<VehicleDefinition, ReturnType<typeof compareStats>>();
+  private comparedActive?: VehicleDefinition;
+  private comparedViewed?: VehicleDefinition;
 
   constructor(private profile: () => PlayerProfile, private buy: (id: string) => void, private select: (id: string) => void) {
     this.dialog = document.createElement('dialog');
@@ -102,9 +117,13 @@ export class Garage {
         <tbody></tbody>
       </table>`;
     document.body.append(this.dialog);
+    this.previewCanvas = this.dialog.querySelector('#garage-preview')!;
     this.brands = this.dialog.querySelector('.garage-brands')!;
     this.cars = this.dialog.querySelector('#garage-cars')!;
     this.action = this.dialog.querySelector('#garage-action')!;
+    this.compareBody = this.dialog.querySelector('#garage-comparison tbody')!;
+    this.currentModel = this.dialog.querySelector('#garage-current-model')!;
+    this.viewedModel = this.dialog.querySelector('#garage-viewed-model')!;
     this.buildCatalog();
     this.dialog.querySelector('#garage-close')!.addEventListener('click', () => this.dialog.close());
     this.action.addEventListener('click', () => {
@@ -124,8 +143,17 @@ export class Garage {
     }
     this.brands.addEventListener('keydown', moveFocus);
     this.cars.addEventListener('keydown', moveFocus);
-    this.dialog.addEventListener('close', () => this.releaseCar());
+    this.dialog.addEventListener('close', () => {
+      if (this.dialog.open) return;
+      this.resizeObserver?.disconnect();
+      this.releaseCar();
+      if (this.renderer && this.previewWidth) this.renderer.setDrawingBufferSize(1, 1, 1);
+      this.previewWidth = 0;
+      this.previewDirty = false;
+    });
+    if (typeof ResizeObserver !== 'undefined') this.resizeObserver = new ResizeObserver(this.onResize);
     window.addEventListener('resize', this.onResize);
+    document.addEventListener('visibilitychange', this.onResize);
     this.scene.add(new THREE.HemisphereLight(0xdcefff, 0x29413d, 3));
     const sun = new THREE.DirectionalLight(0xffffff, 4);
     sun.position.set(4, 7, 5);
@@ -142,6 +170,7 @@ export class Garage {
     this.message('');
     this.dialog.showModal();
     this.preview();
+    if (this.renderer) this.resizeObserver?.observe(this.previewCanvas);
   }
 
   private buildCatalog() {
@@ -223,20 +252,42 @@ export class Garage {
   }
 
   private updateComparison(active: VehicleDefinition, viewed: VehicleDefinition) {
-    this.dialog.querySelector('#garage-current-model')!.textContent = active.name;
-    this.dialog.querySelector('#garage-viewed-model')!.textContent = viewed.name;
-    const viewedStats = compareStats(viewed);
-    const rows = compareStats(active).map(([label, value], index) => {
-      const row = document.createElement('tr');
-      const heading = document.createElement('th');
-      heading.scope = 'row';
-      heading.textContent = label;
-      row.append(heading);
-      row.insertCell().textContent = value;
-      row.insertCell().textContent = viewedStats[index][1];
-      return row;
+    if (!this.compareBody.rows.length) {
+      for (const [label] of this.getStockStats(active)) {
+        const row = this.compareBody.insertRow();
+        const heading = document.createElement('th');
+        heading.scope = 'row';
+        heading.textContent = label;
+        row.append(heading);
+        row.insertCell().append(document.createTextNode(''));
+        row.insertCell().append(document.createTextNode(''));
+      }
+    }
+    if (this.comparedActive !== active) {
+      this.updateComparisonColumn(active, this.currentModel, 1);
+      this.comparedActive = active;
+    }
+    if (this.comparedViewed !== viewed) {
+      this.updateComparisonColumn(viewed, this.viewedModel, 2);
+      this.comparedViewed = viewed;
+    }
+  }
+
+  private getStockStats(vehicle: VehicleDefinition) {
+    let stats = this.stockStats.get(vehicle);
+    if (!stats) {
+      stats = compareStats(vehicle);
+      this.stockStats.set(vehicle, stats);
+    }
+    return stats;
+  }
+
+  private updateComparisonColumn(vehicle: VehicleDefinition, title: HTMLElement, column: number) {
+    title.textContent = vehicle.name;
+    this.getStockStats(vehicle).forEach(([, value], index) => {
+      const cellText = this.compareBody.rows[index].cells[column].firstChild!;
+      if (cellText.nodeValue !== value) cellText.nodeValue = value;
     });
-    this.dialog.querySelector('#garage-comparison tbody')!.replaceChildren(...rows);
   }
 
   private preview() {
@@ -244,8 +295,7 @@ export class Garage {
     let next: Car | undefined;
     try {
       if (!this.renderer) {
-        this.renderer = new THREE.WebGLRenderer({ canvas: this.dialog.querySelector<HTMLCanvasElement>('#garage-preview')!, antialias: true, alpha: true });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
+        this.renderer = new THREE.WebGLRenderer({ canvas: this.previewCanvas, antialias: true, alpha: true });
         this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
       }
       next = new Car(getVehicleDefinition(this.selected));
@@ -256,6 +306,7 @@ export class Garage {
     } catch {
       if (next && next !== this.car) next.dispose();
       this.releaseCar();
+      this.resizeObserver?.disconnect();
       this.renderer?.dispose();
       this.renderer = undefined;
       this.previewAvailable = false;
@@ -270,14 +321,26 @@ export class Garage {
     this.car = undefined;
   }
 
-  private renderPreview() {
-    if (!this.renderer || !this.car) return;
-    const canvas = this.renderer.domElement;
-    const width = canvas.clientWidth || 400;
-    const height = canvas.clientHeight || 240;
-    this.renderer.setSize(width, height, false);
+  private resizePreview() {
+    if (!this.renderer) return false;
+    const width = this.previewCanvas.clientWidth || 400;
+    const height = this.previewCanvas.clientHeight || 240;
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.6);
+    if (width === this.previewWidth && height === this.previewHeight && pixelRatio === this.previewPixelRatio) return false;
+    this.previewWidth = width;
+    this.previewHeight = height;
+    this.previewPixelRatio = pixelRatio;
+    this.renderer.setDrawingBufferSize(width, height, pixelRatio);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    return true;
+  }
+
+  private renderPreview() {
+    if (!this.dialog.open || !this.renderer || !this.car) return;
+    this.previewDirty = document.hidden;
+    if (this.previewDirty) return;
+    if (!this.previewWidth) this.resizePreview();
     this.camera.position.set(Math.sin(this.angle) * 9, 3.8, Math.cos(this.angle) * 9);
     this.camera.lookAt(0, 0.7, 0);
     this.renderer.render(this.scene, this.camera);
@@ -287,6 +350,8 @@ export class Garage {
     if (this.disposed) return;
     this.disposed = true;
     window.removeEventListener('resize', this.onResize);
+    document.removeEventListener('visibilitychange', this.onResize);
+    this.resizeObserver?.disconnect();
     this.releaseCar();
     this.renderer?.dispose();
     this.scene.traverse(object => {

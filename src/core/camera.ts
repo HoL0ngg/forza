@@ -24,6 +24,12 @@ export class ChaseCamera {
     this.camera.updateProjectionMatrix();
   }
 
+  setFarClip(distance: number) {
+    if (this.camera.far === distance) return;
+    this.camera.far = distance;
+    this.camera.updateProjectionMatrix();
+  }
+
   resize() {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();

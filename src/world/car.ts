@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Vehicle } from '../physics/vehicle';
 import { gt01 } from '../data/vehicles/gt01';
 import type { ProceduralVehiclePreset, VehicleDefinition } from '../data/vehicles/types';
@@ -9,6 +10,37 @@ const bodyStyles = {
   coupe: { roofRear: -0.82, roofFront: 0.16, roofHeight: 1.53, hoodLength: 1.57, tireWidth: 0.25, rimScale: 0.75, spokePairs: 6 },
   muscle: { roofRear: -0.76, roofFront: -0.03, roofHeight: 1.48, hoodLength: 1.8, tireWidth: 0.33, rimScale: 0.68, spokePairs: 4 },
 } satisfies Record<ProceduralVehiclePreset, Record<string, number>>;
+
+/** Bake rigid pieces, retaining their parent motion, material and shadow settings. */
+function batchBody(body: THREE.Group) {
+  const byMaterial = new Map<THREE.Material, THREE.Mesh[]>();
+  for (const piece of body.children) {
+    if (!(piece instanceof THREE.Mesh) || Array.isArray(piece.material) || piece.material.transparent) continue;
+    const pieces = byMaterial.get(piece.material);
+    if (pieces) pieces.push(piece);
+    else byMaterial.set(piece.material, [piece]);
+  }
+  const originals = new Set<THREE.BufferGeometry>();
+  for (const [material, pieces] of byMaterial) {
+    const first = pieces[0];
+    if (pieces.length < 2 || pieces.some(piece => piece.castShadow !== first.castShadow || piece.receiveShadow !== first.receiveShadow)) continue;
+    const transformed = pieces.map(piece => {
+      piece.updateMatrix();
+      return piece.geometry.clone().applyMatrix4(piece.matrix);
+    });
+    const geometry = mergeGeometries(transformed);
+    for (const part of transformed) part.dispose();
+    if (!geometry) continue;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = first.castShadow;
+    mesh.receiveShadow = first.receiveShadow;
+    body.remove(...pieces);
+    body.add(mesh);
+    for (const piece of pieces) originals.add(piece.geometry);
+  }
+  for (const piece of body.children) if (piece instanceof THREE.Mesh) originals.delete(piece.geometry);
+  for (const geometry of originals) geometry.dispose();
+}
 
 export class Car {
   readonly mesh = new THREE.Group();
@@ -95,23 +127,23 @@ export class Car {
     }
     box(0.56, 0.18, 0.045, 0, 0.66, -2.185, chrome);
     box(0.92, 0.18, 0.06, 0, 0.59, 2.19, black);
+    batchBody(this.body);
     const tireGeometry = new THREE.CylinderGeometry(definition.wheelRadius, definition.wheelRadius, tireWidth, 16);
     tireGeometry.rotateZ(Math.PI / 2);
     const rimRadius = definition.wheelRadius * rimScale;
     const rimGeometry = new THREE.CylinderGeometry(rimRadius, rimRadius, tireWidth + 0.015, 16).rotateZ(Math.PI / 2);
-    const spokeGeometry = new THREE.BoxGeometry(tireWidth + 0.02, preset === 'muscle' ? 0.06 : 0.035, rimRadius * 1.77);
+    const spoke = new THREE.BoxGeometry(tireWidth + 0.02, preset === 'muscle' ? 0.06 : 0.035, rimRadius * 1.77);
+    const rotatedSpokes = Array.from({ length: spokePairs }, (_, index) => spoke.clone().rotateX(index * Math.PI / spokePairs));
+    const spokeGeometry = mergeGeometries(rotatedSpokes)!;
+    spoke.dispose();
+    for (const geometry of rotatedSpokes) geometry.dispose();
     for (const z of [definition.wheelbase / 2, -definition.wheelbase / 2]) for (const side of [-1, 1]) {
       const hub = new THREE.Group();
       hub.position.set(side * (definition.dimensions.width / 2 - 0.025), definition.wheelRadius + 0.02, z);
       const wheel = new THREE.Group();
       const tire = new THREE.Mesh(tireGeometry, black);
       tire.castShadow = true;
-      wheel.add(tire, new THREE.Mesh(rimGeometry, chrome));
-      for (let s = 0; s < spokePairs; s++) {
-        const spoke = new THREE.Mesh(spokeGeometry, black);
-        spoke.rotation.x = s * Math.PI / spokePairs;
-        wheel.add(spoke);
-      }
+      wheel.add(tire, new THREE.Mesh(rimGeometry, chrome), new THREE.Mesh(spokeGeometry, black));
       hub.add(wheel);
       this.mesh.add(hub);
       this.hubs.push(hub);
@@ -124,8 +156,8 @@ export class Car {
     this.mesh.position.set(vehicle.x, suspensionTravel * 0.36, vehicle.z);
     this.mesh.rotation.y = vehicle.heading;
     this.body.rotation.z = vehicle.steering * Math.min(Math.abs(vehicle.speed) / 40, 0.65) * -Math.min(0.24, suspensionTravel);
-    this.wheels.forEach((wheel) => { wheel.rotation.x = vehicle.wheelAngle; });
-    this.hubs.slice(0, 2).forEach((hub) => { hub.rotation.y = vehicle.steering; });
+    for (const wheel of this.wheels) wheel.rotation.x = vehicle.wheelAngle;
+    this.hubs[0].rotation.y = this.hubs[1].rotation.y = vehicle.steering;
     this.brakeMaterial.emissiveIntensity = braking ? 2.5 : 0.35;
   }
 

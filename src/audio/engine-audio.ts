@@ -9,6 +9,8 @@ export interface EngineSoundState {
   lastShift: 'up' | 'down' | 'select';
 }
 
+const firingRatios = [1, 2.003, 0.5] as const;
+
 /** Synthesized six-cylinder engine. No audio downloads; graph is created only on user interaction. */
 export class EngineAudio {
   enabled = true;
@@ -26,6 +28,10 @@ export class EngineAudio {
   private previousThrottle = 0;
   private previousShift = 0;
   private lastPop = -1;
+  private firingTarget = NaN;
+  private engineTarget = NaN;
+  private filterTarget = NaN;
+  private intakeTarget = NaN;
 
   constructor(private createContext: () => AudioContext = () => new AudioContext()) {}
   get running() { return this.context?.state === 'running' && this.active && this.enabled; }
@@ -113,13 +119,31 @@ export class EngineAudio {
     const rpm = Math.max(state.idleRpm, Math.min(state.redlineRpm, state.rpm));
     // A four-stroke six-cylinder engine fires 3 times per revolution: frequency = RPM / 60 × 3.
     const firing = rpm / 20;
-    const ratios = [1, 2.003, 0.5];
-    this.oscillators.forEach((oscillator, i) => oscillator.frequency.setTargetAtTime(firing * ratios[i], now, 0.035));
     const load = state.isRevMatching ? 0.65 : state.throttle;
     const cut = state.isShifting && !state.isRevMatching ? 0.35 : 1;
-    this.engineGain!.gain.setTargetAtTime((0.14 + load * 0.2 + rpm / state.redlineRpm * 0.05) * cut, now, 0.022);
-    this.filter!.frequency.setTargetAtTime(550 + rpm * 0.16 + load * 2200, now, 0.05);
-    this.intakeGain!.gain.setTargetAtTime(0.035 + load * 0.13, now, 0.04);
+    const engineTarget = (0.14 + load * 0.2 + rpm / state.redlineRpm * 0.05) * cut;
+    const filterTarget = 550 + rpm * 0.16 + load * 2200;
+    const intakeTarget = 0.035 + load * 0.13;
+
+    // Leave an existing ramp in place while its target is unchanged.
+    if (firing !== this.firingTarget) {
+      for (let index = 0; index < this.oscillators.length; index++) {
+        this.oscillators[index].frequency.setTargetAtTime(firing * firingRatios[index], now, 0.035);
+      }
+      this.firingTarget = firing;
+    }
+    if (engineTarget !== this.engineTarget) {
+      this.engineGain!.gain.setTargetAtTime(engineTarget, now, 0.022);
+      this.engineTarget = engineTarget;
+    }
+    if (filterTarget !== this.filterTarget) {
+      this.filter!.frequency.setTargetAtTime(filterTarget, now, 0.05);
+      this.filterTarget = filterTarget;
+    }
+    if (intakeTarget !== this.intakeTarget) {
+      this.intakeGain!.gain.setTargetAtTime(intakeTarget, now, 0.04);
+      this.intakeTarget = intakeTarget;
+    }
     if ((state.shiftSerial !== this.previousShift && state.lastShift === 'up' && rpm > 3500) || (this.previousThrottle > 0.65 && state.throttle < 0.1 && rpm > 4000 && !state.isShifting)) this.pop(now);
     this.previousShift = state.shiftSerial;
     this.previousThrottle = state.throttle;
@@ -139,6 +163,7 @@ export class EngineAudio {
   dispose() {
     this.sources.forEach((source) => { try { source.stop(); source.disconnect(); } catch { /* Already stopped. */ } });
     this.sources = []; this.oscillators = [];
+    this.firingTarget = this.engineTarget = this.filterTarget = this.intakeTarget = NaN;
     if (this.context && this.context.state !== 'closed') void this.context.close().catch(() => {});
     this.context = undefined; this.master = undefined; this.engineGain = undefined;
     this.filter = undefined; this.intakeGain = undefined; this.compressor = undefined; this.noiseBuffer = undefined;

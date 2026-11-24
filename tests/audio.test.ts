@@ -6,7 +6,8 @@ import type { EngineSoundState } from '../src/audio/engine-audio';
 // Small Web Audio port double: checks lifecycle/routing/control values, not audible timbre.
 class Param {
   value = 0;
-  setTargetAtTime(value: number) { this.value = value; }
+  targetWrites = 0;
+  setTargetAtTime(value: number) { this.value = value; this.targetWrites++; }
   setValueAtTime(value: number) { this.value = value; }
   exponentialRampToValueAtTime(value: number) { this.value = value; }
   cancelScheduledValues() {}
@@ -63,6 +64,28 @@ test('pause/mute are silent; resume reuses graph and volume is bounded', async (
   audio.setEnabled(true); await audio.unlock(); assert.equal(ctx.oscillators.length, 3);
   audio.setVolume(-1); assert.equal(audio.volume, 0);
   audio.dispose();
+});
+test('unchanged engine targets schedule no duplicate work and changed input takes effect on the next update', async () => {
+  const ctx = new ContextPort();
+  const audio = new EngineAudio(() => ctx as unknown as AudioContext);
+  audio.setActive(true);
+  assert.equal(await audio.unlock(), true);
+  try {
+    audio.update(idle);
+    const engineFrequency = ctx.oscillators[0].frequency;
+    const engineGain = ctx.gains[1].gain;
+    const counts = () => [engineFrequency.targetWrites, engineGain.targetWrites];
+    const initial = counts();
+    for (let i = 0; i < 300; i++) audio.update(idle);
+    assert.deepEqual(counts(), initial);
+    const loaded = { ...idle, rpm: 1800, throttle: 0.5 };
+    audio.update(loaded);
+    assert.equal(engineFrequency.value, 90);
+    assert.deepEqual(counts(), initial.map(count => count + 1));
+    audio.update(loaded);
+    assert.deepEqual(counts(), initial.map(count => count + 1));
+    assert.equal(ctx.oscillators.length, 3);
+  } finally { audio.dispose(); }
 });
 test('audio device failure does not escape into the game', async () => {
   const audio = new EngineAudio(() => { throw new Error('Audio not available'); });

@@ -420,7 +420,8 @@ export class CityScenery {
     addLandmarks(scene);
   }
 
-  update(x: number, z: number) {
-    for (const tile of this.tiles) tile.group.visible = (tile.x - x) ** 2 + (tile.z - z) ** 2 < 575 ** 2;
+  update(x: number, z: number, detailRadius: number) {
+    const radiusSq = detailRadius * detailRadius;
+    for (const tile of this.tiles) tile.group.visible = (tile.x - x) ** 2 + (tile.z - z) ** 2 < radiusSq;
   }
 }

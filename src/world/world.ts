@@ -3,6 +3,7 @@ import { roadSamples, nearestRoad, track } from './track';
 import { getWorldDefinition } from './catalog';
 import type { WorldDefinition } from './catalog';
 import { CityScenery } from './city-scenery';
+import { GRAPHICS_QUALITY } from '../perf/budgets';
 
 function randomGenerator(seed: number) {
   return () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
@@ -33,6 +34,8 @@ export class World {
   readonly sunlight: THREE.DirectionalLight;
   private readonly city?: CityScenery;
   private disposed = false;
+  private detailRadius: number = GRAPHICS_QUALITY.high.detailRadius;
+  private readonly palms: { center: THREE.Vector3; radius: number; trunks: THREE.InstancedMesh; leaves: THREE.InstancedMesh }[] = [];
 
   constructor(definition: WorldDefinition = getWorldDefinition()) {
     const isCity = definition.id === 'city';
@@ -137,25 +140,36 @@ export class World {
     leafGeo.setAttribute('position', new THREE.Float32BufferAttribute([0,0,0, -0.6,0.1,2, 0,0.6,1.8, 0.6,0.1,2, 0,-1.3,5.4],3));
     leafGeo.setIndex([0,1,2,0,2,3,1,4,2,2,4,3]);
     leafGeo.computeVertexNormals();
-    for (let i = 0; i < 32; i++) {
-      const t = i / 32;
-      const point = track.getPointAt(t);
-      const tangent = track.getTangentAt(t);
-      const side = i % 2 ? 1 : -1;
-      const palm = new THREE.Group();
-      palm.position.set(point.x - tangent.z * 20 * side, 0, point.z + tangent.x * 20 * side);
-      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.4, 9, 6), trunkMat);
-      trunk.position.y = 4.5;
-      trunk.castShadow = true;
-      palm.add(trunk);
-      for (let j = 0; j < 7; j++) {
-        const leaf = new THREE.Mesh(leafGeo, leafMat);
-        leaf.position.y = 9;
-        leaf.rotation.y = j * Math.PI * 2 / 7 + i;
-        leaf.castShadow = true;
-        palm.add(leaf);
+    const trunkGeo = new THREE.CylinderGeometry(0.22, 0.4, 9, 6);
+    const palmsPerBatch = 4;
+    const frondsPerPalm = 7;
+    dummy.scale.setScalar(1);
+    for (let start = 0; start < 32; start += palmsPerBatch) {
+      const trunks = new THREE.InstancedMesh(trunkGeo, trunkMat, palmsPerBatch);
+      const leaves = new THREE.InstancedMesh(leafGeo, leafMat, palmsPerBatch * frondsPerPalm);
+      trunks.castShadow = leaves.castShadow = true;
+      for (let index = 0; index < palmsPerBatch; index++) {
+        const i = start + index;
+        const point = track.getPointAt(i / 32);
+        const tangent = track.getTangentAt(i / 32);
+        const side = i % 2 ? 1 : -1;
+        const x = point.x - tangent.z * 20 * side;
+        const z = point.z + tangent.x * 20 * side;
+        dummy.position.set(x, 4.5, z);
+        dummy.rotation.y = 0;
+        dummy.updateMatrix();
+        trunks.setMatrixAt(index, dummy.matrix);
+        dummy.position.y = 9;
+        for (let j = 0; j < frondsPerPalm; j++) {
+          dummy.rotation.y = j * Math.PI * 2 / frondsPerPalm + i;
+          dummy.updateMatrix();
+          leaves.setMatrixAt(index * frondsPerPalm + j, dummy.matrix);
+        }
       }
-      this.scene.add(palm);
+      leaves.computeBoundingSphere();
+      const bounds = leaves.boundingSphere!;
+      this.palms.push({ center: bounds.center, radius: bounds.radius, trunks, leaves });
+      this.scene.add(trunks, leaves);
     }
   }
 
@@ -233,10 +247,19 @@ export class World {
     }
   }
 
+  setDetailRadius(radius: number) {
+    this.detailRadius = radius;
+  }
+
   update(x: number, z: number) {
     this.sunlight.position.set(x - (this.city ? 84 : 45), this.city ? 57 : 85, z + 35);
     this.sunlight.target.position.set(x, 0, z);
-    this.city?.update(x, z);
+    this.city?.update(x, z, this.detailRadius);
+    const high = this.detailRadius >= GRAPHICS_QUALITY.high.detailRadius;
+    for (const palm of this.palms) {
+      const radius = this.detailRadius + palm.radius;
+      palm.trunks.visible = palm.leaves.visible = high || (palm.center.x - x) ** 2 + (palm.center.z - z) ** 2 < radius * radius;
+    }
   }
 
   dispose() {

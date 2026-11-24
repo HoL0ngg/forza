@@ -5,7 +5,9 @@ import { DEFAULT_WORLD_ID, getWorldDefinition } from '../world/catalog';
 import { Hud } from '../ui/hud';
 import { ChaseCamera } from './camera';
 import { Input } from './input';
-import { FrameTimings } from './frame-timings';
+import { FrameTimings } from '../perf/frame-timings';
+import { AutoQuality, loadQualitySettings, saveQualitySettings } from '../perf/quality';
+import type { QualityLevel } from '../perf/quality';
 import { SIM_STEP, SimulationSession } from '../sim/session';
 import type { SimAction } from '../sim/session';
 import { TrafficSimulation, TrafficView } from '../traffic';
@@ -27,6 +29,7 @@ import { RaceMarkers } from '../racing/race-markers';
 const TRAFFIC_DENSITY_KEY = 'coastline-drive:traffic-density:v1';
 const TRAFFIC_SEED = 0x2be26af9;
 const MAX_CATCH_UP_STEPS = 8;
+const creditFormat = new Intl.NumberFormat('vi-VN');
 const isTrafficDensity = (value: string | null): value is TrafficDensity =>
   value === 'off' || value === 'low' || value === 'medium' || value === 'high';
 
@@ -43,6 +46,9 @@ export class Game {
   private map = getWorldDefinition(new URLSearchParams(location.search).get('map') === 'coast' ? 'coast' : DEFAULT_WORLD_ID);
   private world = new World(this.map);
   private disposed = false;
+  private loopStarted = false;
+  private loopScheduled = false;
+  private renderRequested = true;
   private savedProfile = loadProfile();
   private profile = this.savedProfile.profile;
   private savedSetup = loadPreset(undefined, getVehicleDefinition(this.profile.selectedVehicleId));
@@ -53,14 +59,18 @@ export class Game {
   private input: Input;
   private started = false;
   private paused = false;
-  private quality: keyof typeof GRAPHICS_QUALITY = 'high';
+  private qualitySettings = loadQualitySettings();
+  private quality = this.qualitySettings.level;
+  private pixelRatio?: number;
+  private readonly autoQuality = new AutoQuality();
   private previousTime?: number;
   private readonly controls = { ...neutralInput };
   private readonly actions: SimAction[] = [];
   private accumulator = 0;
   private hudTimer = 0;
-  private readonly debug = new URLSearchParams(location.search).has('debug');
-  private readonly timings = this.debug ? new FrameTimings() : undefined;
+  private readonly query = new URLSearchParams(location.search);
+  private readonly diagnosticsEnabled = this.query.get('perf') === '1' || this.query.has('debug');
+  private readonly timings = this.diagnosticsEnabled ? new FrameTimings() : undefined;
   private tuning: TuningPanel;
   private audio = new EngineAudio();
   private readonly soundState: EngineSoundState = {
@@ -73,20 +83,29 @@ export class Game {
   private trafficDensity = loadTrafficDensity();
   private traffic = new TrafficSimulation(this.map, TRAFFIC_SEED, this.trafficDensity);
   private trafficView = new TrafficView(this.traffic);
-  private simulation = new SimulationSession(this.map, this.vehicle, this.trial, this.traffic, undefined, this.debug);
+  private simulation = new SimulationSession(this.map, this.vehicle, this.trial, this.traffic, undefined, this.diagnosticsEnabled);
   private raceMarkers = new RaceMarkers();
   private sessionTunings = new Map<string, ReturnType<typeof loadPreset>['config']>();
+  private readonly progressStatus: HTMLElement;
+  private readonly startTrialButton: HTMLButtonElement;
+  private readonly cancelTrialButton: HTMLButtonElement;
+  private readonly progress = {
+    profile: undefined as PlayerProfile | undefined,
+    vehicleId: '', coast: false, tenths: -1, checkpoint: 0,
+    credits: '', best: '',
+  };
 
   constructor(private hud: Hud) {
     this.renderer = new THREE.WebGLRenderer({ canvas: document.querySelector<HTMLCanvasElement>('#game')!, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, GRAPHICS_QUALITY.high.pixelRatio));
     this.renderer.setSize(innerWidth, innerHeight);
-    this.renderer.shadowMap.enabled = GRAPHICS_QUALITY.high.shadows;
+    // Three resets its counters after the shadow pass by default.
+    if (this.timings) this.renderer.info.autoReset = false;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
     this.world.scene.add(this.car.mesh);
     this.world.scene.add(this.raceMarkers.mesh, this.trafficView.group);
+    this.applyQuality(this.qualitySettings.level);
     this.input = new Input((code) => this.action(code), () => {
       this.clearDynamics();
       if (this.started && !this.paused) this.pause();
@@ -111,6 +130,9 @@ export class Game {
     status.className = 'progress-status';
     status.id = 'progress-status';
     status.setAttribute('role', 'status');
+    this.progressStatus = status;
+    this.startTrialButton = controls.querySelector('#start-trial')!;
+    this.cancelTrialButton = controls.querySelector('#cancel-trial')!;
     controls.append(status);
     document.body.append(controls);
     this.hud.setWorld(this.map);
@@ -130,28 +152,57 @@ export class Game {
     window.addEventListener('resize', () => {
       this.renderer.setSize(innerWidth, innerHeight);
       this.camera.resize();
+      this.renderRequested = true;
     });
     this.renderer.domElement.addEventListener('webglcontextlost', (event) => {
       event.preventDefault();
       this.paused = true;
       this.clearDynamics();
       this.audio.setActive(false);
+      this.renderRequested = false;
       this.hud.error('Kết nối đồ họa bị gián đoạn. Nhấn Thử lại để khởi động lại game.');
     });
+    this.renderer.domElement.addEventListener('webglcontextrestored', () => { this.renderRequested = true; });
+    document.addEventListener('visibilitychange', this.visibilityChanged);
+    window.addEventListener('pageshow', this.pageRestored);
     window.addEventListener('pagehide', event => {
       if (event.persisted) {
         this.clearDynamics();
         this.audio.setActive(false);
         this.pause();
+        this.scheduleAnimationLoop(false);
       } else this.dispose();
     });
     if (import.meta.hot) import.meta.hot.dispose(() => this.dispose());
   }
 
+  private readonly visibilityChanged = () => {
+    this.previousTime = undefined;
+    this.autoQuality.reset();
+    this.renderRequested = true;
+    this.refreshAnimationLoop();
+  };
+
+  private readonly pageRestored = (event: PageTransitionEvent) => {
+    if (event.persisted) this.visibilityChanged();
+  };
+
+  private refreshAnimationLoop() {
+    this.scheduleAnimationLoop(this.loopStarted && !this.disposed && !document.hidden);
+  }
+
+  private scheduleAnimationLoop(schedule: boolean) {
+    if (schedule === this.loopScheduled) return;
+    this.loopScheduled = schedule;
+    this.renderer.setAnimationLoop(schedule ? this.frame : null);
+  }
+
   private dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.renderer.setAnimationLoop(null);
+    document.removeEventListener('visibilitychange', this.visibilityChanged);
+    window.removeEventListener('pageshow', this.pageRestored);
+    this.scheduleAnimationLoop(false);
     this.audio.setActive(false);
     this.audio.dispose();
     this.vehicleRuntime.dispose();
@@ -170,6 +221,7 @@ export class Game {
     this.trafficDensity = value;
     this.traffic.setDensity(value);
     this.trafficView.update();
+    this.renderRequested = true;
     this.timings?.clear();
     try { window.localStorage.setItem(TRAFFIC_DENSITY_KEY, value); }
     catch { this.hud.toast('Mật độ giao thông được áp dụng cho phiên này.'); }
@@ -192,6 +244,7 @@ export class Game {
     this.actions.length = 0;
     this.accumulator = 0;
     this.previousTime = undefined;
+    this.autoQuality.reset();
     this.timings?.clear();
   }
 
@@ -214,10 +267,11 @@ export class Game {
     const oldWorld = this.world;
     this.trafficView.dispose();
     this.world = world;
+    world.setDetailRadius(GRAPHICS_QUALITY[this.quality].detailRadius);
     this.map = map;
     this.traffic = traffic;
     this.trafficView = trafficView;
-    this.simulation = new SimulationSession(map, this.vehicle, this.trial, traffic, undefined, this.debug);
+    this.simulation = new SimulationSession(map, this.vehicle, this.trial, traffic, undefined, this.diagnosticsEnabled);
     world.scene.add(this.car.mesh, this.raceMarkers.mesh, trafficView.group);
     oldWorld.dispose();
     this.hud.setWorld(map);
@@ -269,17 +323,31 @@ export class Game {
   }
 
   private updateProgress() {
-    const status = document.querySelector('#progress-status');
-    if (!status) return;
+    const cache = this.progress;
     const coast = this.map.id === 'coast';
-    const best = this.profile.bestTimeMs === null ? 'Chưa có kỷ lục' : `Kỷ lục ${(this.profile.bestTimeMs / 1000).toFixed(2)}s`;
-    const credits = this.profile.credits.toLocaleString('vi-VN');
-    const message = this.trial.active
-      ? `${(this.trial.elapsedMs / 1000).toFixed(1)}s · Checkpoint ${Math.min(this.trial.checkpointIndex + 1, this.trial.checkpointCount)}/${this.trial.checkpointCount} · ${credits} CR`
-      : `${this.vehicle.definition.brand} ${this.vehicle.definition.name} · ${credits} CR${coast ? ` · ${best}` : ''}`;
-    if (status.textContent !== message) status.textContent = message;
-    document.querySelector<HTMLButtonElement>('#start-trial')!.hidden = !coast;
-    document.querySelector<HTMLButtonElement>('#cancel-trial')!.hidden = !this.trial.active;
+    const vehicle = this.vehicle.definition;
+    const racing = this.trial.active;
+    const tenths = racing ? Math.round(this.trial.elapsedMs / 100) : -1;
+    const checkpoint = racing ? Math.min(this.trial.checkpointIndex + 1, this.trial.checkpointCount) : 0;
+    if (cache.profile === this.profile && cache.vehicleId === vehicle.id && cache.coast === coast
+      && cache.tenths === tenths && cache.checkpoint === checkpoint) return;
+
+    if (cache.profile !== this.profile) {
+      cache.credits = creditFormat.format(this.profile.credits);
+      cache.best = this.profile.bestTimeMs === null ? 'Chưa có kỷ lục' : `Kỷ lục ${(this.profile.bestTimeMs / 1000).toFixed(2)}s`;
+    }
+    cache.profile = this.profile;
+    cache.vehicleId = vehicle.id;
+    cache.coast = coast;
+    cache.tenths = tenths;
+    cache.checkpoint = checkpoint;
+
+    const message = racing
+      ? `${(tenths / 10).toFixed(1)}s · Checkpoint ${checkpoint}/${this.trial.checkpointCount} · ${cache.credits} CR`
+      : `${vehicle.brand} ${vehicle.name} · ${cache.credits} CR${coast ? ` · ${cache.best}` : ''}`;
+    if (this.progressStatus.textContent !== message) this.progressStatus.textContent = message;
+    if (this.startTrialButton.hidden === coast) this.startTrialButton.hidden = !coast;
+    if (this.cancelTrialButton.hidden === racing) this.cancelTrialButton.hidden = !racing;
   }
 
   private bindUI() {
@@ -317,7 +385,18 @@ export class Game {
       if (isTrafficDensity(trafficSelector.value)) this.setTrafficDensity(trafficSelector.value);
     });
     click('pause-reset', () => { this.reset(true); this.hud.pauseDialog.close(); });
-    click('quality', () => this.cycleQuality());
+    const qualitySelect = document.querySelector<HTMLSelectElement>('#quality')!;
+    const qualityAuto = document.querySelector<HTMLInputElement>('#quality-auto')!;
+    const changeQualitySettings = () => {
+      const level = qualitySelect.value;
+      if (!Object.hasOwn(GRAPHICS_QUALITY, level)) return;
+      this.qualitySettings = { version: 1, level: level as QualityLevel, auto: qualityAuto.checked };
+      this.autoQuality.reset();
+      this.applyQuality(this.qualitySettings.level);
+      if (!saveQualitySettings(this.qualitySettings)) this.hud.toast('Cài đặt đồ họa được áp dụng cho phiên này.');
+    };
+    qualitySelect.addEventListener('change', changeQualitySettings);
+    qualityAuto.addEventListener('change', changeQualitySettings);
     click('fullscreen', () => {
       const request = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
       if (request) void request.catch(() => this.hud.toast('Trình duyệt chưa cho phép toàn màn hình.'));
@@ -406,10 +485,16 @@ export class Game {
     this.hud.setSound(this.audio.enabled, this.audio.running);
   }
 
-  private cycleQuality() {
-    this.quality = this.quality === 'high' ? 'low' : this.quality === 'low' ? 'medium' : 'high';
-    const preset = GRAPHICS_QUALITY[this.quality];
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, preset.pixelRatio));
+  private applyQuality(level: QualityLevel) {
+    this.quality = level;
+    const preset = GRAPHICS_QUALITY[level];
+    const pixelRatio = Math.min(devicePixelRatio, preset.pixelRatio);
+    if (this.pixelRatio !== pixelRatio) {
+      this.pixelRatio = pixelRatio;
+      this.renderer.setPixelRatio(pixelRatio);
+    }
+    this.camera.setFarClip(preset.cameraFar);
+    this.world.setDetailRadius(preset.detailRadius);
     if (this.renderer.shadowMap.enabled !== preset.shadows) {
       this.renderer.shadowMap.enabled = preset.shadows;
       this.world.scene.traverse(object => {
@@ -417,17 +502,21 @@ export class Game {
         for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.needsUpdate = true;
       });
     }
+    this.renderRequested = true;
     this.timings?.clear();
-    document.querySelector('#quality')!.textContent = `Đồ họa: ${preset.label}`;
+    this.hud.setQuality(this.qualitySettings.level, this.qualitySettings.auto, level);
   }
 
   private changeCamera() {
     this.camera.far = !this.camera.far;
+    if (this.paused || !this.started) this.camera.update(this.vehicle, 0, !this.started, true);
+    this.renderRequested = true;
     document.querySelector('#pause-camera')!.innerHTML = `Camera: ${this.camera.far ? 'Xa' : 'Gần'}`;
     this.hud.toast(`Camera bám theo: ${this.camera.far ? 'Xa' : 'Gần'}`);
   }
 
   private syncPose() {
+    this.renderRequested = true;
     this.car.update(this.vehicle, this.vehicle.braking);
     this.camera.update(this.vehicle, 0, !this.started, true);
     this.world.update(this.vehicle.x, this.vehicle.z);
@@ -481,8 +570,7 @@ export class Game {
     }
   }
 
-  private updatePresentation(dt: number) {
-    this.car.update(this.vehicle, this.vehicle.braking);
+  private updateAudio() {
     const drivetrain = this.vehicle.transmission;
     const sound = this.soundState;
     sound.rpm = drivetrain.rpm;
@@ -494,62 +582,82 @@ export class Game {
     sound.shiftSerial = drivetrain.shiftSerial;
     sound.lastShift = drivetrain.lastShift;
     this.audio.update(sound);
-    this.camera.update(this.vehicle, dt, !this.started);
-    this.raceMarkers.update(this.trial);
   }
 
   startLoop() {
-    this.renderer.setAnimationLoop((time) => {
-      const interval = this.previousTime === undefined ? 0 : Math.max(0, time - this.previousTime);
-      this.previousTime = time;
-      const dt = Math.min(interval / 1000, 0.1);
-      const timings = this.timings;
-      const tickStart = timings ? performance.now() : 0;
-      let steps = 0;
-      let trafficMs = 0;
-      if (this.started && !this.paused) {
-        this.accumulator += interval / 1000;
-        if (this.accumulator >= SIM_STEP) this.input.read(this.controls);
-        while (this.accumulator >= SIM_STEP && steps < MAX_CATCH_UP_STEPS) {
-          this.accumulator -= SIM_STEP;
-          this.tick();
-          steps++;
-          trafficMs += this.simulation.lastTrafficMs;
-        }
-        // Drop overdue whole steps, retaining only the sub-tick fraction.
-        if (this.accumulator >= SIM_STEP) this.accumulator %= SIM_STEP;
-      }
-      const trafficStart = timings ? performance.now() : 0;
-      this.trafficView.update();
-      const sceneryStart = timings ? performance.now() : 0;
-      this.world.update(this.vehicle.x, this.vehicle.z);
-      const presentationStart = timings ? performance.now() : 0;
-      this.updatePresentation(dt);
-      const hudStart = timings ? performance.now() : 0;
-      this.hudTimer += dt;
-      if (this.hudTimer >= 0.08) {
-        this.hud.update(this.vehicle, this.simulation.onRoad);
-        this.hud.animateRpm(this.vehicle, this.hudTimer);
-        this.updateProgress();
-        this.hudTimer = 0;
-      }
-      const renderStart = timings ? performance.now() : 0;
-      this.renderer.render(this.world.scene, this.camera.camera);
-
-      if (timings) {
-        timings.record(
-          interval, Math.max(0, trafficStart - tickStart - trafficMs),
-          trafficMs + sceneryStart - trafficStart, presentationStart - sceneryStart,
-          hudStart - presentationStart, renderStart - hudStart, performance.now() - renderStart, steps,
-        );
-        const metrics = timings.report(this.renderer.info);
-        if (metrics) {
-          metrics.npcCount = this.traffic.vehicleCount;
-          metrics.pedestrianCount = this.traffic.pedestrianCount;
-          this.hud.setDiagnostics(metrics);
-          console.debug('[performance]', metrics);
-        }
-      }
-    });
+    if (this.loopStarted || this.disposed) return;
+    this.loopStarted = true;
+    this.refreshAnimationLoop();
   }
+
+  private readonly frame = (time: number) => {
+    const active = this.started && !this.paused;
+    if (document.hidden || (!active && !this.renderRequested)) return;
+    this.renderRequested = false;
+    const interval = this.previousTime === undefined ? 0 : Math.max(0, time - this.previousTime);
+    this.previousTime = time;
+    const dt = Math.min(interval / 1000, 0.1);
+    if (active && this.qualitySettings.auto) {
+      const next = this.autoQuality.sample(interval, this.quality);
+      if (next !== this.quality) {
+        this.applyQuality(next);
+        this.hud.toast(`Đã tự hạ đồ họa xuống mức ${GRAPHICS_QUALITY[next].label}.`);
+      }
+    }
+    const timings = this.timings;
+    const tickStart = timings ? performance.now() : 0;
+    let steps = 0;
+    let trafficMs = 0;
+    if (active) {
+      this.accumulator += interval / 1000;
+      if (this.accumulator >= SIM_STEP) this.input.read(this.controls);
+      while (this.accumulator >= SIM_STEP && steps < MAX_CATCH_UP_STEPS) {
+        this.accumulator -= SIM_STEP;
+        this.tick();
+        steps++;
+        trafficMs += this.simulation.lastTrafficMs;
+      }
+      // Drop overdue whole steps, retaining only the sub-tick fraction.
+      if (this.accumulator >= SIM_STEP) this.accumulator %= SIM_STEP;
+    }
+    const trafficStart = timings ? performance.now() : 0;
+    this.trafficView.update();
+    const sceneryStart = timings ? performance.now() : 0;
+    this.world.update(this.vehicle.x, this.vehicle.z);
+    const cameraStart = timings ? performance.now() : 0;
+    this.camera.update(this.vehicle, dt, !this.started);
+    const presentationStart = timings ? performance.now() : 0;
+    this.car.update(this.vehicle, this.vehicle.braking);
+    this.raceMarkers.update(this.trial);
+    const audioStart = timings ? performance.now() : 0;
+    if (active) this.updateAudio();
+    const hudStart = timings ? performance.now() : 0;
+    this.hudTimer += dt;
+    if (this.hudTimer >= 0.08) {
+      this.hud.update(this.vehicle, this.simulation.onRoad);
+      this.hud.animateRpm(this.vehicle, this.hudTimer);
+      this.updateProgress();
+      this.hudTimer = 0;
+    }
+    const renderStart = timings ? performance.now() : 0;
+    if (timings) this.renderer.info.reset();
+    this.renderer.render(this.world.scene, this.camera.camera);
+
+    if (timings && active) {
+      timings.record(
+        interval, steps, Math.max(0, trafficStart - tickStart - trafficMs),
+        trafficMs + sceneryStart - trafficStart, cameraStart - sceneryStart,
+        presentationStart - cameraStart, renderStart - hudStart, hudStart - audioStart,
+        audioStart - presentationStart, performance.now() - renderStart,
+      );
+      const metrics = timings.report(this.renderer.info);
+      if (metrics) {
+        metrics.quality = this.quality;
+        metrics.npcCount = this.traffic.vehicleCount;
+        metrics.pedestrianCount = this.traffic.pedestrianCount;
+        this.hud.setDiagnostics(metrics);
+        console.debug('[performance]', JSON.stringify(metrics));
+      }
+    }
+  };
 }
